@@ -20,26 +20,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour tokens
 security = HTTPBearer()
 
 def hash_password(password: str) -> str:
-    """
-    Convert plain password to secure hash
-    Why: Never store plain passwords in database
-    Example: "password123" -> "$2b$12$EixZaYVK1fsbw1ZfbX3OXe..."
-    """
+    """Convert plain password to secure hash"""
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Check if entered password matches stored hash
-    Why: Used during login to verify user identity
-    """
+    """Check if entered password matches stored hash"""
     return pwd_context.verify(plain_password, hashed_password)
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
-    """
-    Create JWT token for authenticated sessions
-    Why: Instead of sending username/password every request,
-         user gets a token that expires automatically
-    """
+    """Create JWT token for authenticated sessions"""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -60,12 +49,7 @@ def get_db():
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), 
                     db: Session = Depends(get_db)):
-    """
-    Extract user info from JWT token
-    Why: This runs on every protected endpoint to identify who is making the request
-    Returns: User object if token is valid
-    Raises: 401 if token is invalid/expired
-    """
+    """Extract user info from JWT token"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -100,11 +84,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     return user
 
 def get_current_moderator(current_user: models.User = Depends(get_current_user)):
-    """
-    Ensure current user is a moderator
-    Why: Restrict certain endpoints to moderators only
-    Usage: Add as dependency to moderator-only endpoints
-    """
+    """Ensure current user is a moderator"""
     if current_user.role not in ["moderator", "admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -113,11 +93,7 @@ def get_current_moderator(current_user: models.User = Depends(get_current_user))
     return current_user
 
 def authenticate_user(db: Session, username: str, password: str):
-    """
-    Verify login credentials
-    Why: Used in login endpoint to check if user exists and password is correct
-    Returns: User object if successful, False if failed
-    """
+    """Verify login credentials"""
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user:
         return False  # User doesn't exist
@@ -132,10 +108,7 @@ def authenticate_user(db: Session, username: str, password: str):
 
 # Optional: Create default moderator account
 def create_default_moderator(db: Session):
-    """
-    Create a default moderator account for testing
-    Why: Need at least one moderator to test the system
-    """
+    """Create a default moderator account for testing"""
     existing_mod = db.query(models.User).filter(
         models.User.username == "admin",
         models.User.role == "moderator"
