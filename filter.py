@@ -15,10 +15,10 @@ abusive_words = load_abusive()
 # Context patterns that might indicate NON-abusive usage
 positive_context_patterns = [
     r"fucking (awesome|brilliant|amazing|great|good|cool|nice|perfect|excellent)",
-    r"stupid (simple|easy|obvious|clear)",
     r"damn (good|great|awesome|cool|nice|impressive)",
     r"shit (ton|load) of (good|great|awesome|fun)",
-    r"badass (in a good way|move|skill|talent)"
+    r"badass (in a good way|move|skill|talent)",
+    r"stupid (simple|easy|obvious|clear|question|brilliant|good|but)"
 ]
 
 # Patterns that are clearly abusive (high confidence)
