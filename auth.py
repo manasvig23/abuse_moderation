@@ -14,7 +14,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # JWT configuration
 SECRET_KEY = "abuse-moderation-secret-key-change-in-production-2024"  # Change this!
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour tokens
+ACCESS_TOKEN_EXPIRE_MINUTES = 120  # 1 hour tokens
 
 # Token dependency for Bearer authentication
 security = HTTPBearer()
