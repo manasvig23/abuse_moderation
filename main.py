@@ -279,3 +279,7 @@ def review_comment(comment_id: int,
     
     db.commit()
     return {"message": result_message, "comment_id": comment.id, "new_status": comment.status}
+
+@app.get("/")
+def root():
+    return {"message": "Abuse Moderation API is running"}
