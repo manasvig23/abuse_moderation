@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
 from database import SessionLocal, engine, Base
@@ -17,6 +18,15 @@ from auth import (
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Abuse Moderation API", version="1.0.0")
+
+# Add CORS middleware - ADD THIS SECTION
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],  # Vue dev server URLs
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 # Database dependency
 def get_db():
