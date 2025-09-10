@@ -84,47 +84,37 @@ def get_my_posts(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """My Profile page - Shows 'My Posts' with all user's posts and comments"""
+    """My Profile page - Shows 'My Posts' with all user's posts and approved comments only"""
     user_posts = db.query(models.Post).filter(
         models.Post.author_id == current_user.id
     ).order_by(models.Post.created_at.desc()).all()
     
     result = []
     for post in user_posts:
-        # Show ALL comments for own posts (approved + pending + hidden)
-        all_comments = []
+        # FIXED: Only show approved comments to users, even on their own posts
+        approved_comments = []
         for c in post.comments:
-            comment_data = {
-                "id": c.id,
-                "text": c.text,
-                "author_username": c.author.username,
-                "created_at": c.created_at,
-                "status": c.status,
-                "is_abusive": c.is_abusive
-            }
-            # Add color coding info for frontend
-            if c.status == "approved" and c.is_abusive == 0:
-                comment_data["box_color"] = "blue"  # Clean comment
-            elif c.status == "pending_review" or c.auto_review_action == "human_review_needed":
-                comment_data["box_color"] = "yellow"  # Needs review
-            elif c.status == "hidden" or c.is_abusive == 1:
-                comment_data["box_color"] = "red"  # Hidden/Deleted
-            else:
-                comment_data["box_color"] = "blue"  # Default
-            
-            all_comments.append(comment_data)
+            if c.status == "approved":
+                approved_comments.append({
+                    "id": c.id,
+                    "text": c.text,
+                    "author_username": c.author.username,
+                    "created_at": c.created_at,
+                    "box_color": "blue"  # All visible comments are clean
+                })
         
         result.append({
             "id": post.id,
             "content": post.content,
             "created_at": post.created_at,
-            "comments": all_comments,
-            "total_comments": len(all_comments),
-            "can_view_comments": True  # User can always view comments on own posts
+            "comments": approved_comments,
+            "total_visible_comments": len(approved_comments),
+            "can_view_comments": True
         })
     
     return {
         "page_title": "My Posts",
+        "navigation": "my_profile",
         "user": {
             "id": current_user.id,
             "username": current_user.username
@@ -169,6 +159,7 @@ def get_explore_feed(
     
     return {
         "page_title": "Discover Posts",
+        "navigation": "explore_feed",
         "posts": result
     }
 
@@ -290,6 +281,7 @@ def get_all_users_list(
     
     return {
         "page_title": "All Users List",
+        "navigation": "user_list",
         "users": users_data,
         "total_users": len(users_data)
     }
@@ -354,6 +346,7 @@ def get_all_posts_moderation(
     
     return {
         "page_title": "All Posts",
+        "navigation": "all_posts",
         "selected_user": {
             "id": selected_user.id,
             "username": selected_user.username
@@ -443,6 +436,7 @@ def get_posts_for_review(
     
     return {
         "page_title": "Review Comments",
+        "navigation": "review_comments",
         "posts": result,
         "message": "Click 'Review' button to moderate comments with Approve/Hide/Delete options"
     }
@@ -542,6 +536,7 @@ def get_flagged_comments(
     
     return {
         "page_title": "Flagged Comments",
+        "navigation": "flagged_comments",
         "selected_user": {
             "id": selected_user.id,
             "username": selected_user.username
@@ -551,7 +546,7 @@ def get_flagged_comments(
 
 @app.get("/api/moderator/statistics")
 def get_statistics(
-    username: Optional[str] = None,  # Changed from user_id to username for dropdown
+    username: Optional[str] = None,  # Using username for dropdown
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
@@ -591,6 +586,7 @@ def get_statistics(
         
         return {
             "type": "user_stats",
+            "navigation": "statistics",
             "user": {
                 "id": user.id,
                 "username": user.username,
@@ -646,6 +642,7 @@ def get_statistics(
         return {
             "type": "overall_stats",
             "page_title": "Overall Statistics",
+            "navigation": "statistics",
             "stats": {
                 "total_users": total_users,
                 "total_moderators": total_moderators,
@@ -701,25 +698,6 @@ def review_comment(comment_id: int,
         "comment_id": comment.id,
         "new_status": comment.status,
         "action_taken": action.action
-    }
-
-@app.get("/api/moderator/users-dropdown")
-def get_users_for_dropdown(
-    moderator: models.User = Depends(get_current_moderator),
-    db: Session = Depends(get_db)
-):
-    """Get simplified user list for dropdown selections"""
-    users = db.query(models.User).order_by(models.User.username).all()
-    
-    return {
-        "users": [
-            {
-                "id": user.id,
-                "username": user.username,
-                "role": user.role
-            }
-            for user in users
-        ]
     }
 
 @app.get("/api/user/me")
