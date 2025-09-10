@@ -1,8 +1,8 @@
+from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-from typing import Optional
 from database import SessionLocal, engine, Base
 import models, schemas
 from filter import is_abusive_with_auto_review
