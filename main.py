@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware  # Add this import
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
+from typing import Optional
 from database import SessionLocal, engine, Base
 import models, schemas
 from filter import is_abusive_with_auto_review
@@ -13,16 +14,13 @@ from auth import (
     get_current_moderator,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
-
 # Create tables
 Base.metadata.create_all(bind=engine)
-
 app = FastAPI(title="Abuse Moderation API", version="1.0.0")
 
-# Add CORS middleware - ADD THIS SECTION
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],  # Vue dev server URLs
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -36,21 +34,16 @@ def get_db():
     finally:
         db.close()
 
-# ---------------------------
 # Authentication Endpoints
-# ---------------------------
 @app.post("/api/register", response_model=schemas.UserResponse)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     """Register a new user"""
-    # Check if username exists
     if db.query(models.User).filter(models.User.username == user.username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
     
-    # Check if email exists
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Create new user
     db_user = models.User(
         username=user.username,
         email=user.email,
@@ -72,7 +65,6 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
             detail="Incorrect username or password"
         )
     
-    # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
@@ -84,9 +76,83 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
         "user": user
     }
 
-# ---------------------------
+# User Endpoints
+@app.get("/api/user/my-posts")
+def get_my_posts(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """My Profile page - Shows user's own posts"""
+    user_posts = db.query(models.Post).filter(
+        models.Post.author_id == current_user.id
+    ).order_by(models.Post.created_at.desc()).all()
+    
+    result = []
+    for post in user_posts:
+        # Show ALL comments for own posts (approved + pending)
+        all_comments = [
+            {
+                "id": c.id,
+                "text": c.text,
+                "author_username": c.author.username,
+                "created_at": c.created_at,
+                "status": c.status
+            }
+            for c in post.comments
+        ]
+        
+        result.append({
+            "id": post.id,
+            "content": post.content,
+            "created_at": post.created_at,
+            "comments": all_comments,
+            "total_comments": len(all_comments)
+        })
+    
+    return {
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username
+        },
+        "posts": result
+    }
+
+@app.get("/api/user/explore-feed")
+def get_explore_feed(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Explore Feed page - Shows other users' posts"""
+    other_posts = db.query(models.Post).filter(
+        models.Post.author_id != current_user.id  # Exclude own posts
+    ).order_by(models.Post.created_at.desc()).all()
+    
+    result = []
+    for post in other_posts:
+        # Show only approved comments for other users' posts
+        approved_comments = [
+            {
+                "id": c.id,
+                "text": c.text,
+                "author_username": c.author.username,
+                "created_at": c.created_at
+            }
+            for c in post.comments 
+            if c.status == "approved"
+        ]
+        
+        result.append({
+            "id": post.id,
+            "content": post.content,
+            "author_username": post.author.username,
+            "created_at": post.created_at,
+            "comments": approved_comments,
+            "total_comments": len(approved_comments)
+        })
+    
+    return {"posts": result}
+
 # Post Endpoints
-# ---------------------------
 @app.post("/api/posts/", response_model=schemas.PostResponse)
 def create_post(post: schemas.PostCreate, 
                current_user: models.User = Depends(get_current_user),
@@ -103,12 +169,11 @@ def create_post(post: schemas.PostCreate,
 
 @app.get("/api/posts/")
 def get_all_posts(db: Session = Depends(get_db)):
-    """Get all posts with approved comments only"""
+    """Get all posts with approved comments only (public view)"""
     posts = db.query(models.Post).order_by(models.Post.created_at.desc()).all()
     
     result = []
     for post in posts:
-        # Only show approved comments
         approved_comments = [
             {
                 "id": c.id,
@@ -132,7 +197,7 @@ def get_all_posts(db: Session = Depends(get_db)):
     return {"posts": result}
 
 @app.get("/api/posts/{post_id}")
-def get_post_with_comments(post_id: int, db: Session = Depends(get_db)):
+def get_post_details(post_id: int, db: Session = Depends(get_db)):
     """Get specific post with approved comments only"""
     post = db.query(models.Post).filter(models.Post.id == post_id).first()
     if not post:
@@ -157,21 +222,17 @@ def get_post_with_comments(post_id: int, db: Session = Depends(get_db)):
         "total_visible_comments": len(approved_comments)
     }
 
-# ---------------------------
 # Comment Endpoints
-# ---------------------------
 @app.post("/api/comments/")
 def create_comment(comment: schemas.CommentCreate, 
                   current_user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
     """Create comment with auto-review system"""
     
-    # Validate post exists
     post = db.query(models.Post).filter(models.Post.id == comment.post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
-    # Validate comment
     if len(comment.text.strip()) == 0:
         raise HTTPException(status_code=400, detail="Comment cannot be empty")
     if len(comment.text) > 1000:
@@ -212,54 +273,294 @@ def create_comment(comment: schemas.CommentCreate,
         "auto_processed": review_result["auto_action"] != "human_review_needed"
     }
 
-# ---------------------------
 # Moderator Endpoints
-# ---------------------------
-@app.get("/api/moderator/dashboard")
-def get_moderation_dashboard(moderator: models.User = Depends(get_current_moderator),
-                           db: Session = Depends(get_db)):
-    """Get moderation dashboard"""
+@app.get("/api/moderator/users")
+def get_all_users_list(
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """User List page - All Users List with details"""
+    users = db.query(models.User).order_by(models.User.created_at.desc()).all()
     
-    # Get hidden/pending comments
-    flagged_comments = db.query(models.Comment).filter(
-        models.Comment.status.in_(["hidden", "pending_review"])
-    ).order_by(models.Comment.created_at.desc()).all()
-    
-    # Statistics
-    total_comments = db.query(models.Comment).count()
-    auto_approved = db.query(models.Comment).filter(models.Comment.auto_review_action == "auto_approve").count()
-    auto_hidden = db.query(models.Comment).filter(models.Comment.auto_review_action == "keep_hidden").count()
-    
-    comments_for_review = []
-    for comment in flagged_comments:
-        comments_for_review.append({
-            "id": comment.id,
-            "text": comment.text,
-            "flagged_words": comment.flagged_words,
-            "confidence_score": comment.confidence_score,
-            "author_username": comment.author.username,
-            "post_id": comment.post_id,
-            "created_at": comment.created_at,
-            "auto_review_action": comment.auto_review_action,
-            "auto_review_reason": comment.auto_review_reason
+    users_data = []
+    for user in users:
+        total_posts = db.query(models.Post).filter(models.Post.author_id == user.id).count()
+        total_comments = db.query(models.Comment).filter(models.Comment.user_id == user.id).count()
+        flagged_comments = db.query(models.Comment).filter(
+            models.Comment.user_id == user.id,
+            models.Comment.is_abusive == 1
+        ).count()
+        
+        users_data.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "created_at": user.created_at,
+            "is_active": user.is_active,
+            "total_posts": total_posts,
+            "total_comments": total_comments,
+            "flagged_comments": flagged_comments
         })
     
+    return {"users": users_data}
+
+@app.get("/api/moderator/all-posts")
+def get_all_posts_moderation(
+    user_id: Optional[int] = None,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """All Posts page - Select user from dropdown and see their posts"""
+    query = db.query(models.Post)
+    
+    # Filter by user if selected from dropdown
+    if user_id:
+        query = query.filter(models.Post.author_id == user_id)
+    
+    posts = query.order_by(models.Post.created_at.desc()).all()
+    
+    result = []
+    for post in posts:
+        # Show ALL comments with their statuses for moderator
+        all_comments = [
+            {
+                "id": c.id,
+                "text": c.text,
+                "author_username": c.author.username,
+                "created_at": c.created_at,
+                "status": c.status,  # approved, hidden, pending_review
+                "is_abusive": c.is_abusive,
+                "flagged_words": c.flagged_words,
+                "confidence_score": c.confidence_score,
+                "auto_review_action": c.auto_review_action,
+                "auto_review_reason": c.auto_review_reason
+            }
+            for c in post.comments
+        ]
+        
+        result.append({
+            "id": post.id,
+            "content": post.content,
+            "author_username": post.author.username,
+            "author_id": post.author_id,
+            "created_at": post.created_at,
+            "comments": all_comments,
+            "total_comments": len(all_comments)
+        })
+    
+    return {"posts": result}
+
+@app.get("/api/moderator/posts-for-review")
+def get_posts_for_review(
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """Review Comments page - List all posts that have comments needing review"""
+    posts_with_pending = db.query(models.Post).join(models.Comment).filter(
+        models.Comment.auto_review_action == "human_review_needed"
+    ).distinct().order_by(models.Post.created_at.desc()).all()
+    
+    result = []
+    for post in posts_with_pending:
+        # Count pending comments for this post
+        pending_count = sum(1 for c in post.comments if c.auto_review_action == "human_review_needed")
+        
+        result.append({
+            "id": post.id,
+            "content": post.content,
+            "author_username": post.author.username,
+            "created_at": post.created_at,
+            "pending_comments_count": pending_count
+        })
+    
+    return {"posts": result}
+
+@app.get("/api/moderator/posts/{post_id}/review")
+def get_post_for_review(
+    post_id: int,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """Review Comments - Show specific post with comments for approve/hide/delete"""
+    post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Show ALL comments for this post
+    all_comments = [
+        {
+            "id": c.id,
+            "text": c.text,
+            "author_username": c.author.username,
+            "created_at": c.created_at,
+            "status": c.status,
+            "is_abusive": c.is_abusive,
+            "flagged_words": c.flagged_words,
+            "confidence_score": c.confidence_score,
+            "auto_review_action": c.auto_review_action,
+            "auto_review_reason": c.auto_review_reason
+        }
+        for c in post.comments
+    ]
+    
     return {
-        "statistics": {
-            "total_comments": total_comments,
-            "auto_approved": auto_approved,
-            "auto_hidden": auto_hidden,
-            "pending_review": len(flagged_comments),
+        "post": {
+            "id": post.id,
+            "content": post.content,
+            "author_username": post.author.username,
+            "created_at": post.created_at
         },
-        "pending_comments": comments_for_review
+        "comments": all_comments
     }
+
+@app.get("/api/moderator/flagged-comments")
+def get_flagged_comments(
+    user_id: Optional[int] = None,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """Flagged Comments page - Select user and see their posts with flagged comments"""
+    query = db.query(models.Post).join(models.Comment).filter(
+        models.Comment.is_abusive == 1
+    )
+    
+    # Filter by user if selected
+    if user_id:
+        query = query.filter(models.Post.author_id == user_id)
+    
+    posts_with_flagged = query.distinct().order_by(models.Post.created_at.desc()).all()
+    
+    result = []
+    for post in posts_with_flagged:
+        # Show only flagged/hidden comments for this post
+        flagged_comments = [
+            {
+                "id": c.id,
+                "text": c.text,
+                "author_username": c.author.username,
+                "created_at": c.created_at,
+                "status": c.status,
+                "flagged_words": c.flagged_words,
+                "confidence_score": c.confidence_score,
+                "auto_review_action": c.auto_review_action,
+                "auto_review_reason": c.auto_review_reason
+            }
+            for c in post.comments
+            if c.is_abusive == 1
+        ]
+        
+        result.append({
+            "id": post.id,
+            "content": post.content,
+            "author_username": post.author.username,
+            "created_at": post.created_at,
+            "flagged_comments": flagged_comments,
+            "flagged_count": len(flagged_comments)
+        })
+    
+    return {"posts": result}
+
+@app.get("/api/moderator/statistics")
+def get_statistics(
+    user_id: Optional[int] = None,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """Statistics page - Overall stats + user-specific stats with dropdown"""
+    
+    if user_id:
+        # User-specific statistics
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        total_posts = db.query(models.Post).filter(models.Post.author_id == user_id).count()
+        total_comments = db.query(models.Comment).filter(models.Comment.user_id == user_id).count()
+        
+        approved_comments = db.query(models.Comment).filter(
+            models.Comment.user_id == user_id,
+            models.Comment.status == "approved"
+        ).count()
+        
+        hidden_comments = db.query(models.Comment).filter(
+            models.Comment.user_id == user_id,
+            models.Comment.status == "hidden"
+        ).count()
+        
+        pending_comments = db.query(models.Comment).filter(
+            models.Comment.user_id == user_id,
+            models.Comment.auto_review_action == "human_review_needed"
+        ).count()
+        
+        return {
+            "type": "user_stats",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "created_at": user.created_at
+            },
+            "stats": {
+                "total_posts": total_posts,
+                "total_comments": total_comments,
+                "approved_comments": approved_comments,
+                "hidden_comments": hidden_comments,
+                "pending_comments": pending_comments
+            }
+        }
+    
+    else:
+        # Overall system statistics
+        total_users = db.query(models.User).count()
+        total_posts = db.query(models.Post).count()
+        total_comments = db.query(models.Comment).count()
+        
+        clean_comments = db.query(models.Comment).filter(
+            models.Comment.status == "approved",
+            models.Comment.is_abusive == 0
+        ).count()
+        
+        flagged_comments = db.query(models.Comment).filter(
+            models.Comment.is_abusive == 1
+        ).count()
+        
+        needs_review = db.query(models.Comment).filter(
+            models.Comment.auto_review_action == "human_review_needed"
+        ).count()
+        
+        auto_hidden = db.query(models.Comment).filter(
+            models.Comment.auto_review_action == "keep_hidden"
+        ).count()
+        
+        auto_approved = db.query(models.Comment).filter(
+            models.Comment.auto_review_action.in_(["approve", "auto_approve"])
+        ).count()
+        
+        # AI efficiency
+        ai_processed = auto_approved + auto_hidden
+        ai_efficiency = round((ai_processed / total_comments) * 100, 1) if total_comments > 0 else 0
+        
+        return {
+            "type": "overall_stats",
+            "stats": {
+                "total_users": total_users,
+                "total_posts": total_posts,
+                "total_comments": total_comments,
+                "clean_comments": clean_comments,
+                "flagged_comments": flagged_comments,
+                "needs_review": needs_review,
+                "auto_hidden": auto_hidden,
+                "auto_approved": auto_approved,
+                "ai_efficiency_percent": ai_efficiency
+            }
+        }
 
 @app.put("/api/moderator/comments/{comment_id}/review")
 def review_comment(comment_id: int,
                   action: schemas.ModerationAction,
                   moderator: models.User = Depends(get_current_moderator),
                   db: Session = Depends(get_db)):
-    """Moderator reviews a flagged comment"""
+    """Moderator reviews a comment - approve/hide/delete"""
     
     comment = db.query(models.Comment).filter(models.Comment.id == comment_id).first()
     if not comment:
@@ -270,10 +571,10 @@ def review_comment(comment_id: int,
         comment.is_abusive = 0
         result_message = "Comment approved and made visible"
         
-    elif action.action == "confirm_hide":
+    elif action.action == "hide":
         comment.status = "hidden" 
         comment.is_abusive = 1
-        result_message = "Comment confirmed as abusive and kept hidden"
+        result_message = "Comment hidden from public view"
         
     elif action.action == "delete":
         db.delete(comment)
@@ -281,7 +582,7 @@ def review_comment(comment_id: int,
         return {"message": "Comment deleted permanently"}
     
     else:
-        raise HTTPException(status_code=400, detail="Invalid action")
+        raise HTTPException(status_code=400, detail="Invalid action. Use: approve, hide, delete")
     
     # Update moderation info
     comment.moderated_by = moderator.id
