@@ -703,6 +703,25 @@ def review_comment(comment_id: int,
         "action_taken": action.action
     }
 
+@app.get("/api/moderator/users-dropdown")
+def get_users_for_dropdown(
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """Get simplified user list for dropdown selections"""
+    users = db.query(models.User).order_by(models.User.username).all()
+    
+    return {
+        "users": [
+            {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role
+            }
+            for user in users
+        ]
+    }
+
 @app.get("/api/user/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_user)):
     """Get current user information for UI display"""

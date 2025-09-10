@@ -60,7 +60,7 @@ class CommentResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# Moderation schema
+# Moderation schema - FIXED
 class ModerationAction(BaseModel):
-    action: str  # "approve", "confirm_hide", "delete"
+    action: str  # "approve", "hide", "delete" (fixed from "confirm_hide")
     reason: Optional[str] = "No reason provided"
