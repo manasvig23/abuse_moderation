@@ -91,7 +91,6 @@ def get_my_posts(
     
     result = []
     for post in user_posts:
-        # FIXED: Only show approved comments to users, even on their own posts
         approved_comments = []
         for c in post.comments:
             if c.status == "approved":
@@ -100,7 +99,7 @@ def get_my_posts(
                     "text": c.text,
                     "author_username": c.author.username,
                     "created_at": c.created_at,
-                    "box_color": "blue"  # All visible comments are clean
+                    "box_color": "blue"
                 })
         
         result.append({
@@ -130,7 +129,7 @@ def get_explore_feed(
 ):
     """Explore Feed page - Shows 'Discover Posts' from other users"""
     other_posts = db.query(models.Post).filter(
-        models.Post.author_id != current_user.id  # Exclude own posts
+        models.Post.author_id != current_user.id
     ).order_by(models.Post.created_at.desc()).all()
     
     result = []
@@ -144,7 +143,7 @@ def get_explore_feed(
                     "text": c.text,
                     "author_username": c.author.username,
                     "created_at": c.created_at,
-                    "box_color": "blue"  # All visible comments are clean
+                    "box_color": "blue"
                 })
         
         result.append({
@@ -154,7 +153,7 @@ def get_explore_feed(
             "created_at": post.created_at,
             "comments": approved_comments,
             "total_comments": len(approved_comments),
-            "can_comment": True  # Users can comment on others' posts
+            "can_comment": True
         })
     
     return {
@@ -208,7 +207,7 @@ def create_comment(comment: schemas.CommentCreate,
     if review_result["auto_action"] in ["approve", "auto_approve"]:
         comment_status = "approved"
         visible_in_feed = True
-    else:  # keep_hidden or human_review_needed
+    else:
         comment_status = "hidden" if review_result["auto_action"] == "keep_hidden" else "pending_review"
         visible_in_feed = False
     
