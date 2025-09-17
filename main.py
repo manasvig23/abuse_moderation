@@ -291,7 +291,9 @@ def get_users_for_dropdown(
     db: Session = Depends(get_db)
 ):
     """Get simplified user list for dropdown selections"""
-    users = db.query(models.User).order_by(models.User.username).all()
+    users = db.query(models.User).filter(
+        models.User.role == "user"  # Only get regular users
+    ).order_by(models.User.username).all()
     
     return {
         "users": [
@@ -412,32 +414,51 @@ def get_posts_for_review(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """Review Comments page - List all posts that have comments needing review with Review button"""
+    """Review Comments page - Enhanced table with user details"""
+    
+    # Get all posts that have comments needing human review
     posts_with_pending = db.query(models.Post).join(models.Comment).filter(
-        models.Comment.auto_review_action == "human_review_needed"
+        models.Comment.auto_review_action == "human_review_needed",
+        models.Comment.status == "pending_review"
     ).distinct().order_by(models.Post.created_at.desc()).all()
     
     result = []
     for post in posts_with_pending:
-        # Count pending comments for this post
-        pending_count = sum(1 for c in post.comments if c.auto_review_action == "human_review_needed")
-        total_comments = len(post.comments)
+        # Count pending human review comments for this post
+        pending_comments = [
+            c for c in post.comments 
+            if c.auto_review_action == "human_review_needed" and c.status == "pending_review"
+        ]
         
-        result.append({
-            "id": post.id,
-            "content": post.content,
-            "author_username": post.author.username,
-            "created_at": post.created_at,
-            "total_comments": total_comments,
-            "pending_comments_count": pending_count,
-            "needs_review": True
-        })
+        if len(pending_comments) > 0:
+            # Get user statistics
+            user = post.author
+            total_user_comments = db.query(models.Comment).filter(models.Comment.user_id == user.id).count()
+            flagged_user_comments = db.query(models.Comment).filter(
+                models.Comment.user_id == user.id,
+                models.Comment.is_abusive == 1
+            ).count()
+            
+            abuse_rate = round((flagged_user_comments / max(total_user_comments, 1)) * 100, 1)
+            
+            result.append({
+                "user_id": user.id,
+                "username": user.username,
+                "is_active": user.is_active,
+                "abuse_rate_percent": abuse_rate,
+                "user_created_at": user.created_at,
+                "post_id": post.id,
+                "post_content": post.content[:100] + "..." if len(post.content) > 100 else post.content,
+                "post_created_at": post.created_at,
+                "pending_comments_count": len(pending_comments),
+                "needs_review": True
+            })
     
     return {
-        "page_title": "Review Comments",
+        "page_title": "Review Comments - User Details",
         "navigation": "review_comments",
-        "posts": result,
-        "message": "Click 'Review' button to moderate comments with Approve/Hide/Delete options"
+        "review_items": result,
+        "message": "Table showing users with posts that need comment review"
     }
 
 @app.get("/api/moderator/posts/{post_id}/review")
@@ -446,31 +467,31 @@ def get_post_for_review(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """Review Comments - Show post with comments and Approve/Hide/Delete buttons"""
+    """Review Comments - Show only comments needing human review"""
     post = db.query(models.Post).filter(models.Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    
-    # Show ALL comments with moderation actions
-    all_comments = []
+   
+    review_needed_comments = []
     for c in post.comments:
-        comment_data = {
-            "id": c.id,
-            "text": c.text,
-            "author_username": c.author.username,
-            "created_at": c.created_at,
-            "status": c.status,
-            "is_abusive": c.is_abusive,
-            "flagged_words": c.flagged_words,
-            "confidence_score": c.confidence_score,
-            "auto_review_action": c.auto_review_action,
-            "auto_review_reason": c.auto_review_reason,
-            "moderated_at": c.moderated_at,
-            "can_approve": c.status != "approved",
-            "can_hide": c.status != "hidden",
-            "can_delete": True
-        }
-        all_comments.append(comment_data)
+        if (c.auto_review_action == "human_review_needed" and 
+            c.status == "pending_review"):
+            comment_data = {
+                "id": c.id,
+                "text": c.text,
+                "author_username": c.author.username,
+                "created_at": c.created_at,
+                "status": c.status,
+                "is_abusive": c.is_abusive,
+                "flagged_words": c.flagged_words,
+                "confidence_score": c.confidence_score,
+                "auto_review_action": c.auto_review_action,
+                "auto_review_reason": c.auto_review_reason,
+                "can_approve": True,
+                "can_hide": True,
+                "can_delete": True
+            }
+            review_needed_comments.append(comment_data)
     
     return {
         "post": {
@@ -479,7 +500,7 @@ def get_post_for_review(
             "author_username": post.author.username,
             "created_at": post.created_at
         },
-        "comments": all_comments,
+        "comments": review_needed_comments,  # Only pending review comments
         "moderation_actions": ["approve", "hide", "delete"]
     }
 
