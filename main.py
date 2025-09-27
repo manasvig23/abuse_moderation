@@ -708,7 +708,7 @@ def review_comment(comment_id: int,
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Use: approve, hide, delete")
     
-    # Update moderation info
+    
     comment.moderated_by = moderator.id
     comment.moderated_at = datetime.utcnow()
     

@@ -12,7 +12,7 @@ import models
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT configuration
-SECRET_KEY = "abuse-moderation-secret-key-change-in-production-2024"  # Change this!
+SECRET_KEY = "abuse-moderation-secret-key-change-in-production-2024"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120  # 1 hour tokens
 

@@ -12,6 +12,7 @@ def load_abusive(filepath="abusive_words.txt"):
 
 abusive_words = load_abusive()
 
+# IMPROVED: More robust patterns with word boundaries and case insensitivity
 positive_context_patterns = [
     r"fucking (awesome|brilliant|amazing|great|good|cool|nice|perfect|excellent)",
     r"damn (good|great|awesome|cool|nice|impressive)",
@@ -20,19 +21,25 @@ positive_context_patterns = [
     r"stupid (simple|easy|obvious|clear|question|brilliant|good|but)"
 ]
 
+# FIXED: Added word boundaries and improved patterns
 clearly_abusive_patterns = [
-    r"you (are|'re) (stupid|idiot|dumb|fucking|an asshole|a bitch|shit)",
-    r"you (stupid|dumb|fucking) (idiot|moron|bitch|asshole)",
-    r"fuck you",
-    r"go to hell", 
-    r"kill yourself",
-    r"hate you",
-    r"piece of (shit|crap)",
-    r"you asshole",
-    r"you (are an|'re an) asshole",
-    r"stupid (bitch|asshole|idiot|moron)",
-    r"fucking (idiot|moron|stupid|dumb)",
-    r"shut up (you )?((stupid|dumb|fucking) )?(bitch|asshole|idiot)",
+    r"\byou (are|'re) (stupid|idiot|dumb|fucking|an asshole|a bitch|shit)\b",
+    r"\byou (stupid|dumb|fucking) (idiot|moron|bitch|asshole)\b",
+    r"\bfuck you\b",
+    r"\bgo to hell\b",  # FIXED: Added word boundaries
+    r"\bkill yourself\b",
+    r"\bhate you\b", 
+    r"\bpiece of (shit|crap)\b",
+    r"\byou asshole\b",
+    r"\byou (are an|'re an) asshole\b",
+    r"\bstupid (bitch|asshole|idiot|moron)\b",
+    r"\bfucking (idiot|moron|stupid|dumb)\b",
+    r"\bshut up\b.*\b(you )?(stupid|dumb|fucking|bitch|asshole|idiot)\b",
+    
+    # ADDED: More abusive patterns
+    r"\byou suck\b",
+    r"\bdie\b.*\b(bitch|asshole|idiot)\b",
+    r"\b(get|go) (lost|away)\b.*\b(idiot|moron|stupid)\b",
 ]
 
 highly_abusive_words = ["asshole", "bitch", "moron", "idiot"]
@@ -41,17 +48,18 @@ def analyze_context(text: str) -> Dict[str, any]:
     """Analyze context to determine if flagged words might be non-abusive"""
     text_lower = text.lower().strip()
     
-    # Check for positive context patterns
+    # Check for positive context patterns (case insensitive)
     positive_context_score = 0
     for pattern in positive_context_patterns:
-        if re.search(pattern, text_lower):
+        if re.search(pattern, text_lower, re.IGNORECASE):
             positive_context_score += 1
     
-    # Check for clearly abusive patterns  
+    # Check for clearly abusive patterns (case insensitive)
     clearly_abusive_score = 0
     for pattern in clearly_abusive_patterns:
-        if re.search(pattern, text_lower):
+        if re.search(pattern, text_lower, re.IGNORECASE):
             clearly_abusive_score += 2  # Weight these higher
+            print(f"DEBUG: Matched abusive pattern: '{pattern}' in text: '{text_lower}'")  # DEBUG
     
     # Check for highly abusive words used in direct address
     highly_abusive_score = 0
@@ -65,8 +73,9 @@ def analyze_context(text: str) -> Dict[str, any]:
         ]
         
         for attack_pattern in direct_attack_patterns:
-            if re.search(attack_pattern, text_lower):
-                highly_abusive_score += 3  
+            if re.search(attack_pattern, text_lower, re.IGNORECASE):
+                highly_abusive_score += 3
+                print(f"DEBUG: Matched highly abusive pattern: '{attack_pattern}' in text: '{text_lower}'")  # DEBUG
     
     # Question/statement analysis
     is_question = text.strip().endswith('?')
@@ -96,6 +105,7 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
         }
     
     text_lower = text.lower().strip()
+    print(f"DEBUG: Analyzing text: '{text_lower}'")  # DEBUG
     
     # Method 1: Exact word matches
     exact_matches = []
@@ -165,9 +175,11 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
     
     # Combine all matches
     all_matches = list(set(exact_matches + repeated_chars + substitution_matches + spaced_matches + asterisk_matches))
+    print(f"DEBUG: Found flagged words: {all_matches}")  # DEBUG
     
     # If no abusive words found, approve immediately
     if not all_matches:
+        print("DEBUG: No abusive words found, approving")  # DEBUG
         return {
             "is_abusive": 0,
             "confidence": 0,
@@ -178,12 +190,14 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
     
     # Analyze context for flagged content
     context_analysis = analyze_context(text)
+    print(f"DEBUG: Context analysis: {context_analysis}")  # DEBUG
        
     # 1. DEFINITELY ABUSIVE - Auto-hide these cases
     if (context_analysis["clearly_abusive"] > 0 or 
         context_analysis["highly_abusive"] > 0 or
         len(all_matches) >= 3):  # Multiple curse words = likely abusive
         
+        print("DEBUG: Classified as DEFINITELY ABUSIVE - auto-hiding")  # DEBUG
         return {
             "is_abusive": 1,
             "confidence": 0.95,
@@ -195,6 +209,7 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
     
     # 2. POSITIVE CONTEXT - Auto-approve
     elif context_analysis["likely_false_positive"]:
+        print("DEBUG: Classified as POSITIVE CONTEXT - auto-approving")  # DEBUG
         return {
             "is_abusive": 0,
             "confidence": 0.3,
@@ -206,6 +221,7 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
     
     # 3. POLITE TONE - Auto-approve
     elif len(all_matches) == 1 and context_analysis["politeness_score"] > 0:
+        print("DEBUG: Classified as POLITE TONE - auto-approving")  # DEBUG
         return {
             "is_abusive": 0,
             "confidence": 0.4,
@@ -217,6 +233,7 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
     
     # 4. SINGLE HIGH-RISK WORD - Auto-hide (NEW RULE)
     elif len(all_matches) == 1 and any(word in highly_abusive_words for word in all_matches):
+        print("DEBUG: Classified as HIGH-RISK WORD - auto-hiding")  # DEBUG
         return {
             "is_abusive": 1,
             "confidence": 0.8,
@@ -228,6 +245,7 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
     
     # 5. UNCERTAIN - Human review needed
     else:
+        print("DEBUG: Classified as UNCERTAIN - needs human review")  # DEBUG
         return {
             "is_abusive": 1,
             "confidence": 0.6,
@@ -238,7 +256,7 @@ def is_abusive_with_auto_review(text: str) -> Dict[str, any]:
         }
 
 def is_abusive(text: str) -> Dict[str, any]:
-    """Simple abuse detection (for backward compatibility) ; Returns basic format like your original function"""
+    """Simple abuse detection (for backward compatibility)"""
     result = is_abusive_with_auto_review(text)
     return {
         "is_abusive": result["is_abusive"],
@@ -249,10 +267,13 @@ def is_abusive(text: str) -> Dict[str, any]:
 # Test the auto-review system
 if __name__ == "__main__":
     test_cases = [
-        # These should AUTO-HIDE now (no human review needed)
+        # These should AUTO-HIDE now
         "You are an asshole",                  
         "You fucking idiot",                   
         "Shut up bitch",                       
+        "Go to hell",  # TEST THIS ONE
+        "go to hell",  # TEST THIS ONE  
+        "GO TO HELL", # TEST THIS ONE
         "You stupid moron asshole",            
         
         # These should AUTO-APPROVE (positive context)
@@ -265,12 +286,13 @@ if __name__ == "__main__":
         "What a load of shit this is",        
     ]
     
-    print("Testing IMPROVED Auto-Review System:")
+    print("Testing IMPROVED Auto-Review System with DEBUG:")
     print("=" * 70)
     
     for text in test_cases:
+        print(f"\n{'='*50}")
         result = is_abusive_with_auto_review(text)
-        print(f"\nText: '{text}'")
+        print(f"Text: '{text}'")
         print(f"Action: {result['auto_action'].upper()}")
         print(f"Reason: {result['reason']}")
         print(f"Confidence: {result['confidence']:.2f}")
