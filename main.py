@@ -328,9 +328,9 @@ def get_all_posts_moderation(
     for post in posts:
         # Count different types of comments
         total_comments = len(post.comments)
-        approved_comments = sum(1 for c in post.comments if c.status == "approved")
-        pending_comments = sum(1 for c in post.comments if c.status == "pending_review" or c.auto_review_action == "human_review_needed")
-        hidden_comments = sum(1 for c in post.comments if c.status == "hidden")
+        approved_comments = sum(1 for c in post.comments if c.status == "approved" and c.is_abusive == 0)
+        pending_comments = sum(1 for c in post.comments if c.status == "pending_review" and c.auto_review_action == "human_review_needed")
+        hidden_comments = sum(1 for c in post.comments if c.status == "hidden" and c.is_abusive == 1)
         
         result.append({
             "id": post.id,
@@ -382,14 +382,14 @@ def view_post_comments_moderation(
             "auto_review_reason": c.auto_review_reason
         }
         
-        # Add color coding based on design
+        # FIXED: Add color coding based on actual status and abuse detection
         if c.status == "approved" and c.is_abusive == 0:
             comment_data["box_color"] = "blue"
-            comment_data["label"] = "CLEAN"
+            comment_data["label"] = "APPROVED"
         elif c.status == "pending_review" or c.auto_review_action == "human_review_needed":
             comment_data["box_color"] = "yellow"
             comment_data["label"] = "NEEDS REVIEW"
-        elif c.status == "hidden":
+        elif c.status == "hidden" or c.is_abusive == 1:
             comment_data["box_color"] = "red"
             comment_data["label"] = "HIDDEN"
         else:
