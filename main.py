@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from email_config import email_service
 import os
+import uuid
 from dotenv import load_dotenv
 from sqlalchemy import func
 from datetime import timedelta, datetime
@@ -45,37 +46,47 @@ def get_db():
 @app.post("/api/register", response_model=schemas.UserResponse)
 async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     """Register a new user with email verification"""
+    # Check if username already exists
     if db.query(models.User).filter(models.User.username == user.username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
     
+    # Check if email already exists
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Generate email verification token
-    verification_token = str(uuid.uuid4())
-    
-    db_user = models.User(
-        username=user.username,
-        email=user.email,
-        password_hash=hash_password(user.password),
-        role=user.role,
-        email_verification_token=verification_token
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    
-    # Send welcome email asynchronously
     try:
-        await email_service.send_welcome_email(
-            user_email=user.email,
-            username=user.username
+        # Generate email verification token
+        verification_token = str(uuid.uuid4())
+        
+        # Create user
+        db_user = models.User(
+            username=user.username,
+            email=user.email,
+            password_hash=hash_password(user.password),
+            role=user.role,
+            email_verification_token=verification_token
         )
+        
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        # Send welcome email asynchronously (don't fail registration if email fails)
+        try:
+            await email_service.send_welcome_email(
+                user_email=user.email,
+                username=user.username
+            )
+        except Exception as e:
+            print(f"Failed to send welcome email: {e}")
+            # Don't fail registration if email fails
+        
+        return db_user
+        
     except Exception as e:
-        print(f"Failed to send welcome email: {e}")
-        # Don't fail registration if email fails
-    
-    return db_user
+        db.rollback()
+        print(f"Registration error: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
 
 @app.post("/api/login", response_model=schemas.Token)
 async def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
