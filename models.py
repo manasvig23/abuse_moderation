@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, DateTime, Boolean, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -13,7 +13,21 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, default="user")  # "user" or "moderator"
     created_at = Column(DateTime, default=datetime.utcnow)
-    is_active = Column(Boolean, default=True)  # FIXED: Boolean instead of Integer
+    is_active = Column(Boolean, default=True)  
+
+    # Suspension fields
+    is_suspended = Column(Boolean, default=False, index=True)
+    suspended_at = Column(DateTime, nullable=True)
+    suspension_reason = Column(String, nullable=True)
+    suspension_appeal_count = Column(Integer, default=0)
+    
+    # Email verification fields
+    email_verified = Column(Boolean, default=False)
+    email_verification_token = Column(String, nullable=True)
+    
+    # Warning system fields
+    warning_count = Column(Integer, default=0)
+    last_warning_sent = Column(DateTime, nullable=True)
 
     # Relationships
     posts = relationship("Post", back_populates="author", foreign_keys="Post.author_id")
@@ -58,3 +72,19 @@ class Comment(Base):
     author = relationship("User", back_populates="comments", foreign_keys=[user_id])
     post = relationship("Post", back_populates="comments", foreign_keys=[post_id])
     moderator = relationship("User", foreign_keys=[moderated_by])
+
+class UserBlock(Base):
+    __tablename__ = "user_blocks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    blocker_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    blocked_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reason = Column(String, nullable=True)  # "auto_abuse" or "manual"
+    
+    # Relationships
+    blocker = relationship("User", foreign_keys=[blocker_id])
+    blocked = relationship("User", foreign_keys=[blocked_id])
+    
+    # Ensure unique blocking relationships
+    __table_args__ = (Index('idx_blocker_blocked', 'blocker_id', 'blocked_id', unique=True),)

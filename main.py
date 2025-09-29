@@ -2,6 +2,10 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from email_config import email_service
+import os
+from dotenv import load_dotenv
+from sqlalchemy import func
 from datetime import timedelta, datetime
 from database import SessionLocal, engine, Base
 import models, schemas
@@ -14,6 +18,8 @@ from auth import (
     get_current_moderator,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
+
+load_dotenv()
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -37,33 +43,55 @@ def get_db():
 
 # Authentication Endpoints
 @app.post("/api/register", response_model=schemas.UserResponse)
-def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    """Register a new user"""
+async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """Register a new user with email verification"""
     if db.query(models.User).filter(models.User.username == user.username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
     
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     
+    # Generate email verification token
+    verification_token = str(uuid.uuid4())
+    
     db_user = models.User(
         username=user.username,
         email=user.email,
         password_hash=hash_password(user.password),
-        role=user.role
+        role=user.role,
+        email_verification_token=verification_token
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    
+    # Send welcome email asynchronously
+    try:
+        await email_service.send_welcome_email(
+            user_email=user.email,
+            username=user.username
+        )
+    except Exception as e:
+        print(f"Failed to send welcome email: {e}")
+        # Don't fail registration if email fails
+    
     return db_user
 
 @app.post("/api/login", response_model=schemas.Token)
-def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
+async def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
     """Login and get access token"""
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
+        )
+    
+    # NEW: Check if user is suspended
+    if user.is_suspended:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Account suspended: {user.suspension_reason or 'Policy violation'}. Contact support for appeals."
         )
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -76,6 +104,56 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
         "token_type": "bearer",
         "user": user
     }
+
+async def check_and_handle_user_abuse(user_id: int, db: Session):
+    """Monitor user abuse rate and take action"""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        return
+    
+    # Calculate abuse rate
+    total_comments = db.query(models.Comment).filter(models.Comment.user_id == user_id).count()
+    flagged_comments = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id,
+        models.Comment.is_abusive == 1
+    ).count()
+    
+    if total_comments < 5:  # Not enough data
+        return
+    
+    abuse_rate = (flagged_comments / total_comments) * 100
+    
+    # Warning threshold (50% abuse rate)
+    if abuse_rate >= 50 and abuse_rate < 70 and user.warning_count < 2:
+        user.warning_count += 1
+        user.last_warning_sent = datetime.utcnow()
+        db.commit()
+        
+        try:
+            await email_service.send_warning_email(
+                user_email=user.email,
+                username=user.username,
+                abuse_rate=abuse_rate,
+                threshold=70
+            )
+        except Exception as e:
+            print(f"Failed to send warning email: {e}")
+    
+    # Suspension threshold (70% abuse rate)
+    elif abuse_rate >= 70 and not user.is_suspended:
+        user.is_suspended = True
+        user.suspended_at = datetime.utcnow()
+        user.suspension_reason = f"High abuse rate: {abuse_rate:.1f}% of comments flagged"
+        db.commit()
+        
+        try:
+            await email_service.send_suspension_email(
+                user_email=user.email,
+                username=user.username,
+                reason=user.suspension_reason
+            )
+        except Exception as e:
+            print(f"Failed to send suspension email: {e}")
 
 # ==================== USER ENDPOINTS ====================
 
@@ -186,10 +264,10 @@ def create_post(post: schemas.PostCreate,
 # ==================== COMMENT ENDPOINTS ====================
 
 @app.post("/api/comments/")
-def create_comment(comment: schemas.CommentCreate, 
+async def create_comment(comment: schemas.CommentCreate, 
                   current_user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    """Post a comment - For comment functionality in Explore Feed"""
+    """Post a comment with abuse monitoring"""
     
     post = db.query(models.Post).filter(models.Post.id == comment.post_id).first()
     if not post:
@@ -227,6 +305,9 @@ def create_comment(comment: schemas.CommentCreate,
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
+    
+    # NEW: Check user abuse rate after comment creation
+    await check_and_handle_user_abuse(current_user.id, db)
     
     return {
         "message": "Comment posted successfully",

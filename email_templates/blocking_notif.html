@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Interaction Update - SafeSpace</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f5f7fa; 
+            margin: 0; 
+            padding: 20px; 
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: white; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1); 
+        }
+        .header { 
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); 
+            color: white; 
+            padding: 30px; 
+            text-align: center; 
+        }
+        .header h1 { 
+            margin: 0; 
+            font-size: 28px; 
+            font-weight: 600; 
+        }
+        .content { 
+            padding: 30px; 
+        }
+        .info-box { 
+            background: #e3f2fd; 
+            border: 1px solid #2196f3; 
+            border-radius: 8px; 
+            padding: 20px; 
+            margin: 20px 0; 
+        }
+        .details-box { 
+            background: #f8f9fa; 
+            border-left: 4px solid #3498db; 
+            padding: 20px; 
+            margin: 20px 0; 
+        }
+        .improvement-tips { 
+            background: #e8f5e8; 
+            border-left: 4px solid #27ae60; 
+            padding: 20px; 
+            margin: 20px 0; 
+        }
+        .footer { 
+            text-align: center; 
+            padding: 20px; 
+            color: #7f8c8d; 
+            font-size: 14px; 
+            background: #f8f9fa; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔒 User Interaction Update</h1>
+        </div>
+        <div class="content">
+            <p style="font-size: 18px; color: #2c3e50;">Hi <strong>{{ username }}</strong>,</p>
+            
+            <div class="info-box">
+                <h3 style="margin-top: 0; color: #1976d2;">Interaction Status Update</h3>
+                <p>We're notifying you about a change in user interaction permissions on SafeSpace.</p>
+            </div>
+            
+            <div class="details-box">
+                <h4 style="margin-top: 0; color: #2c3e50;">What happened:</h4>
+                <p><strong>{{ blocked_by_username }}</strong> has restricted interactions with your account due to repeated inappropriate comments on their posts.</p>
+            </div>
+            
+            <h4>What this means:</h4>
+            <ul>
+                <li>You can no longer comment on posts by <strong>{{ blocked_by_username }}</strong></li>
+                <li>This restriction was applied automatically based on content patterns</li>
+                <li>Your interactions with other users remain unaffected</li>
+                <li>You can still create your own posts and comment elsewhere</li>
+                <li>This blocking relationship may be permanent or temporary</li>
+            </ul>
+            
+            <div class="improvement-tips">
+                <h4 style="margin-top: 0; color: #27ae60;">💡 Tips for Better Interactions</h4>
+                <ul style="margin: 10px 0;">
+                    <li>Focus on constructive feedback rather than criticism</li>
+                    <li>Ask questions instead of making assumptions</li>
+                    <li>Acknowledge others' perspectives before sharing yours</li>
+                    <li>Use "I" statements to express your views</li>
+                    <li>Take breaks if discussions become heated</li>
+                </ul>
+            </div>
+            
+            <p style="background: #e3f2fd; padding: 15px; border-radius: 8px; color: #1565c0;">
+                <strong>Note:</strong> This is part of our user-to-user protection system. Users can control who interacts with their content to maintain a comfortable environment for everyone.
+            </p>
+            
+            <h4>Moving Forward:</h4>
+            <p>We encourage respectful interaction with all community members. By improving your communication style and focusing on positive engagement, you can avoid similar restrictions with other users.</p>
+            
+            <p style="color: #7f8c8d; font-size: 14px; font-style: italic;">
+                This restriction was applied automatically based on interaction patterns and abuse detection algorithms.
+            </p>
+            
+            <p style="color: #7f8c8d; font-size: 14px;">
+                Questions about this restriction? Contact our support team or review our community guidelines for more information about respectful engagement.
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{ current_year }} SafeSpace. Empowering user control and safety.</p>
+            <p style="margin: 5px 0 0 0; font-size: 12px;">Building respectful communities through smart moderation</p>
+        </div>
+    </div>
+</body>
+</html>

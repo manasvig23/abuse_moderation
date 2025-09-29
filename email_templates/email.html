@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to SafeSpace</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f7fa; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 600; }
+        .content { padding: 30px; }
+        .welcome-text { font-size: 18px; color: #2c3e50; margin-bottom: 20px; }
+        .features { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .feature-item { margin: 10px 0; color: #5a6c7d; }
+        .cta-button { display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; border-radius: 25px; text-decoration: none; font-weight: 600; margin: 20px 0; }
+        .footer { text-align: center; padding: 20px; color: #7f8c8d; font-size: 14px; background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ Welcome to SafeSpace</h1>
+        </div>
+        <div class="content">
+            <p class="welcome-text">Hi <strong>{{ username }}</strong>,</p>
+            
+            <p>Welcome to SafeSpace! We're excited to have you join our community where respectful conversation thrives.</p>
+            
+            <div class="features">
+                <h3 style="margin-top: 0; color: #2c3e50;">What you can do:</h3>
+                <div class="feature-item">✅ Create engaging posts and share your thoughts</div>
+                <div class="feature-item">💬 Comment on posts from other community members</div>
+                <div class="feature-item">🔒 Enjoy a safe, moderated environment</div>
+                <div class="feature-item">🤖 Benefit from our AI-powered content filtering</div>
+            </div>
+            
+            <p>Our advanced moderation system helps maintain a positive environment for everyone. Please remember to keep your interactions respectful and constructive.</p>
+            
+            <a href="{{ login_url }}" class="cta-button">Start Exploring SafeSpace</a>
+            
+            <p style="margin-top: 30px; font-size: 14px; color: #7f8c8d;">
+                If you have any questions or need support, feel free to reach out to us.
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{ current_year }} SafeSpace. Making online communities safer.</p>
+        </div>
+    </div>
+</body>
+</html>

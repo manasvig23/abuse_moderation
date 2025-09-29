@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Suspended - SafeSpace</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f7fa; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 600; }
+        .content { padding: 30px; }
+        .suspension-box { background: #fadbd8; border: 1px solid #e74c3c; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .reason-box { background: #f8f9fa; border-left: 4px solid #e74c3c; padding: 20px; margin: 20px 0; }
+        .appeal-box { background: #e8f4fd; border: 1px solid #3498db; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .footer { text-align: center; padding: 20px; color: #7f8c8d; font-size: 14px; background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚫 Account Suspended</h1>
+        </div>
+        <div class="content">
+            <p style="font-size: 18px; color: #2c3e50;">Hi <strong>{{ username }}</strong>,</p>
+            
+            <div class="suspension-box">
+                <h3 style="margin-top: 0; color: #c0392b;">Your SafeSpace account has been temporarily suspended</h3>
+                <p>Due to violations of our community guidelines, we have temporarily restricted access to your account.</p>
+            </div>
+            
+            <div class="reason-box">
+                <h4 style="margin-top: 0; color: #2c3e50;">Suspension Reason:</h4>
+                <p style="color: #e74c3c; font-weight: 600;">{{ reason }}</p>
+            </div>
+            
+            <h4>What this means:</h4>
+            <ul>
+                <li>You cannot log in to your SafeSpace account</li>
+                <li>Your existing posts and comments remain visible to other users</li>
+                <li>You cannot create new posts or comments</li>
+                <li>This suspension is currently indefinite pending review</li>
+            </ul>
+            
+            <div class="appeal-box">
+                <h4 style="margin-top: 0; color: #2c3e50;">📧 Appeal Process</h4>
+                <p>If you believe this suspension was made in error, you can appeal by:</p>
+                <ol>
+                    <li>Emailing us at: <strong>{{ appeal_email }}</strong></li>
+                    <li>Subject line: "Account Appeal - {{ username }}"</li>
+                    <li>Explain your situation and provide relevant context</li>
+                    <li>Our moderation team will review within 3-5 business days</li>
+                </ol>
+            </div>
+            
+            <p>We take community safety seriously and appreciate your understanding. Future participation will require adherence to our community guidelines.</p>
+            
+            <p style="color: #7f8c8d; font-size: 14px; font-style: italic;">
+                This is an automated message from the SafeSpace moderation system.
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{ current_year }} SafeSpace. Committed to community safety.</p>
+        </div>
+    </div>
+</body>
+</html>

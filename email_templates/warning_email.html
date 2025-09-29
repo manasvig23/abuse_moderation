@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Content Warning - SafeSpace</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f7fa; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 600; }
+        .content { padding: 30px; }
+        .warning-box { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .stats { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .stat-number { font-size: 36px; font-weight: bold; color: #e67e22; }
+        .guidelines { background: #e8f5e8; border-left: 4px solid #27ae60; padding: 20px; margin: 20px 0; }
+        .footer { text-align: center; padding: 20px; color: #7f8c8d; font-size: 14px; background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚠️ Content Warning</h1>
+        </div>
+        <div class="content">
+            <p style="font-size: 18px; color: #2c3e50;">Hi <strong>{{ username }}</strong>,</p>
+            
+            <div class="warning-box">
+                <h3 style="margin-top: 0; color: #8b6914;">Action Required: Review Your Comment Behavior</h3>
+                <p>We've noticed that some of your recent comments have been flagged by our moderation system for potentially inappropriate content.</p>
+            </div>
+            
+            <div class="stats">
+                <div class="stat-number">{{ abuse_rate|round(1) }}%</div>
+                <p>of your comments have been flagged</p>
+                <p style="color: #e67e22; font-weight: 600;">
+                    Warning threshold: {{ threshold }}%
+                </p>
+            </div>
+            
+            <p>To maintain a positive community environment, we ask that you:</p>
+            
+            <div class="guidelines">
+                <h4 style="margin-top: 0; color: #27ae60;">Community Guidelines Reminder:</h4>
+                <ul>
+                    <li>Keep conversations respectful and constructive</li>
+                    <li>Avoid offensive language and personal attacks</li>
+                    <li>Focus on the topic rather than attacking individuals</li>
+                    <li>Report inappropriate content instead of responding negatively</li>
+                </ul>
+            </div>
+            
+            <p style="background: #ffeaa7; padding: 15px; border-radius: 8px; color: #8b6914;">
+                <strong>Important:</strong> If your abuse rate reaches {{ threshold }}% or higher, your account may be temporarily suspended. Please review your commenting style to avoid this outcome.
+            </p>
+            
+            <p>We appreciate your understanding and cooperation in keeping SafeSpace a welcoming place for everyone.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{ current_year }} SafeSpace. Building better communities together.</p>
+        </div>
+    </div>
+</body>
+</html>
