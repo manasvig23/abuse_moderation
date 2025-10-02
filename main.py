@@ -2,10 +2,11 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+load_dotenv()
 from email_config import email_service
 import os
 import uuid
-from dotenv import load_dotenv
 from sqlalchemy import func
 from datetime import timedelta, datetime
 from database import SessionLocal, engine, Base
@@ -20,7 +21,7 @@ from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 
-load_dotenv()
+
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -77,9 +78,9 @@ async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
                 user_email=user.email,
                 username=user.username
             )
-        except Exception as e:
-            print(f"Failed to send welcome email: {e}")
-            # Don't fail registration if email fails
+            print(f"✅ Welcome email sent successfully to {user.email}")
+        except Exception as email_error:
+            print(f"❌ Failed to send welcome email to {user.email}: {email_error}")
         
         return db_user
         
