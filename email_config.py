@@ -20,7 +20,7 @@ FROM_NAME = os.getenv("FROM_NAME", "SafeSpace Moderation System")
 FROM_EMAIL = os.getenv("FROM_EMAIL")
 EMAIL_FROM = f"{FROM_NAME} <{FROM_EMAIL}>"
 
-# Template Environment - Fixed path
+# Template Environment
 template_env = Environment(loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), 'email_templates')))
 
 class EmailService:
@@ -69,7 +69,7 @@ class EmailService:
         html_body = template.render(
             username=username,
             current_year=datetime.now().year,
-            login_url="http://localhost:5173/login"  # Update with your frontend URL
+            login_url="http://localhost:5173/login" 
         )
         
         subject = f"Welcome to SafeSpace, {username}!"

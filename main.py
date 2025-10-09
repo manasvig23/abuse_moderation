@@ -72,7 +72,7 @@ async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(db_user)
         
-        # Send welcome email asynchronously (don't fail registration if email fails)
+        # Send welcome email asynchronously (registration doesnt fail if email fails)
         try:
             await email_service.send_welcome_email(
                 user_email=user.email,
@@ -99,7 +99,7 @@ async def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_d
             detail="Incorrect username or password"
         )
     
-    # NEW: Check if user is suspended
+    # Check if user is suspended
     if user.is_suspended:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -279,7 +279,9 @@ def create_post(post: schemas.PostCreate,
 async def create_comment(comment: schemas.CommentCreate, 
                   current_user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    """Post a comment with abuse monitoring"""
+    """Post a comment with spam and abuse monitoring"""
+    
+    from spam_detection import detect_spam
     
     post = db.query(models.Post).filter(models.Post.id == comment.post_id).first()
     if not post:
@@ -290,7 +292,45 @@ async def create_comment(comment: schemas.CommentCreate,
     if len(comment.text) > 1000:
         raise HTTPException(status_code=400, detail="Comment too long (max 1000 characters)")
     
-    # Run auto-review analysis
+    # STEP 1: Check for SPAM first (before abuse detection)
+    spam_result = detect_spam(comment.text, current_user.id, comment.post_id, db)
+    
+    if spam_result["is_spam"]:
+        # Create spam comment (hidden)
+        db_comment = models.Comment(
+            text=comment.text,
+            is_spam=1,
+            is_abusive=0,  # Not checking abuse for spam
+            status="hidden",
+            spam_reasons=",".join(spam_result["reasons"]),
+            spam_confidence=spam_result["confidence"],
+            auto_review_action="auto_hide_spam",
+            auto_review_reason=spam_result["message"],
+            user_id=current_user.id,
+            post_id=comment.post_id
+        )
+        db.add(db_comment)
+        db.commit()
+        db.refresh(db_comment)
+        
+        return {
+            "message": "Comment detected as spam and hidden",
+            "comment_id": db_comment.id,
+            "visible_in_feed": False,
+            "auto_processed": True,
+            "spam_detected": True,
+            "spam_reasons": spam_result["reasons"],
+            "spam_message": spam_result["message"]
+        }
+    
+    # Warning case (not spam yet, but high repetition)
+    if spam_result["action"] == "warning":
+        # Show warning but allow comment to proceed to abuse check
+        warning_message = spam_result["message"]
+    else:
+        warning_message = None
+    
+    # STEP 2: If not spam, check for ABUSE
     review_result = is_abusive_with_auto_review(comment.text)
     
     # Determine status based on auto-review
@@ -304,6 +344,7 @@ async def create_comment(comment: schemas.CommentCreate,
     # Create comment
     db_comment = models.Comment(
         text=comment.text,
+        is_spam=0,  # Not spam
         is_abusive=review_result["is_abusive"],
         status=comment_status,
         confidence_score=int(review_result["confidence"] * 100),
@@ -318,15 +359,22 @@ async def create_comment(comment: schemas.CommentCreate,
     db.commit()
     db.refresh(db_comment)
     
-    # NEW: Check user abuse rate after comment creation
+    # Check user abuse rate after comment creation
     await check_and_handle_user_abuse(current_user.id, db)
     
-    return {
+    response = {
         "message": "Comment posted successfully",
         "comment_id": db_comment.id,
         "visible_in_feed": visible_in_feed,
-        "auto_processed": review_result["auto_action"] != "human_review_needed"
+        "auto_processed": review_result["auto_action"] != "human_review_needed",
+        "spam_detected": False
     }
+    
+    # Add warning if present
+    if warning_message:
+        response["warning"] = warning_message
+    
+    return response
 
 # ==================== MODERATOR ENDPOINTS ====================
 
@@ -475,7 +523,7 @@ def view_post_comments_moderation(
             "auto_review_reason": c.auto_review_reason
         }
         
-        # FIXED: Add color coding based on actual status and abuse detection
+        # Color coding based on actual status and abuse detection
         if c.status == "approved" and c.is_abusive == 0:
             comment_data["box_color"] = "blue"
             comment_data["label"] = "APPROVED"
@@ -659,7 +707,7 @@ def get_flagged_comments(
 
 @app.get("/api/moderator/statistics")
 def get_statistics(
-    username: Optional[str] = None,  # Using username for dropdown
+    username: Optional[str] = None,
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
@@ -694,8 +742,15 @@ def get_statistics(
             models.Comment.is_abusive == 1
         ).count()
         
-        # Calculate user's abuse rate
+        # NEW: Add spam comments count
+        spam_comments = db.query(models.Comment).filter(
+            models.Comment.user_id == user.id,
+            models.Comment.is_spam == 1
+        ).count()
+        
+        # Calculate rates
         abuse_rate = round((flagged_comments / total_comments) * 100, 1) if total_comments > 0 else 0
+        spam_rate = round((spam_comments / total_comments) * 100, 1) if total_comments > 0 else 0
         
         return {
             "type": "user_stats",
@@ -715,7 +770,9 @@ def get_statistics(
                 "hidden_comments": hidden_comments,
                 "pending_comments": pending_comments,
                 "flagged_comments": flagged_comments,
-                "abuse_rate_percent": abuse_rate
+                "spam_comments": spam_comments,  # NEW
+                "abuse_rate_percent": abuse_rate,
+                "spam_rate_percent": spam_rate  # NEW
             }
         }
     
@@ -728,11 +785,17 @@ def get_statistics(
         
         clean_comments = db.query(models.Comment).filter(
             models.Comment.status == "approved",
-            models.Comment.is_abusive == 0
+            models.Comment.is_abusive == 0,
+            models.Comment.is_spam == 0  # NEW: Exclude spam
         ).count()
         
         flagged_comments = db.query(models.Comment).filter(
             models.Comment.is_abusive == 1
+        ).count()
+        
+        # NEW: Add spam statistics
+        spam_comments = db.query(models.Comment).filter(
+            models.Comment.is_spam == 1
         ).count()
         
         needs_review = db.query(models.Comment).filter(
@@ -740,7 +803,7 @@ def get_statistics(
         ).count()
         
         auto_hidden = db.query(models.Comment).filter(
-            models.Comment.auto_review_action == "keep_hidden"
+            models.Comment.auto_review_action.in_(["keep_hidden", "auto_hide_spam"])  # Include spam
         ).count()
         
         auto_approved = db.query(models.Comment).filter(
@@ -751,6 +814,7 @@ def get_statistics(
         ai_processed = auto_approved + auto_hidden
         ai_efficiency = round((ai_processed / total_comments) * 100, 1) if total_comments > 0 else 0
         abuse_detection_rate = round((flagged_comments / total_comments) * 100, 1) if total_comments > 0 else 0
+        spam_detection_rate = round((spam_comments / total_comments) * 100, 1) if total_comments > 0 else 0  # NEW
         
         return {
             "type": "overall_stats",
@@ -763,11 +827,13 @@ def get_statistics(
                 "total_comments": total_comments,
                 "clean_comments": clean_comments,
                 "flagged_comments": flagged_comments,
+                "spam_comments": spam_comments,  # NEW
                 "needs_review": needs_review,
                 "auto_hidden": auto_hidden,
                 "auto_approved": auto_approved,
                 "ai_efficiency_percent": ai_efficiency,
-                "abuse_detection_rate": abuse_detection_rate
+                "abuse_detection_rate": abuse_detection_rate,
+                "spam_detection_rate": spam_detection_rate  # NEW
             },
             "message": "Select a user from dropdown to view user-specific statistics"
         }

@@ -49,6 +49,10 @@ class Comment(Base):
     id = Column(Integer, primary_key=True, index=True)
     text = Column(Text, nullable=False)
     is_abusive = Column(Integer, default=0, index=True)  # 0=clean, 1=abusive
+
+    is_spam = Column(Integer, default=0, index=True)  # 0=not spam, 1=spam
+    spam_reasons = Column(String)  # Comma-separated spam reasons
+    spam_confidence = Column(Integer, default=0)  # 0-100
     
     # Enhanced moderation fields
     status = Column(String, default="approved", index=True)  # "approved", "hidden", "pending_review"

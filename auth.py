@@ -106,7 +106,7 @@ def authenticate_user(db: Session, username: str, password: str):
         
     return user  # Login successful
 
-# Optional: Create default moderator account
+# Create default moderator account
 def create_default_moderator(db: Session):
     """Create a default moderator account for testing"""
     existing_mod = db.query(models.User).filter(

@@ -1,0 +1,161 @@
+# spam_detection.py
+import re
+from datetime import datetime, timedelta
+from typing import Dict
+from sqlalchemy.orm import Session
+from difflib import SequenceMatcher
+import models
+
+def calculate_similarity(text1: str, text2: str) -> float:
+    """Calculate text similarity ratio between two texts"""
+    return SequenceMatcher(None, text1.lower().strip(), text2.lower().strip()).ratio()
+
+def is_promotional_content(text: str) -> bool:
+    """Check if text contains promotional/spam keywords"""
+    promotional_keywords = [
+        'check out my', 'visit my', 'click here', 'buy now',
+        'follow me', 'subscribe to', 'check my profile', 'dm me',
+        'whatsapp', 'telegram', 'link in bio', 'follow for follow',
+        'check this out', 'visit here', 'my website', 'my channel',
+        'discount', 'limited offer', 'earn money', 'work from home'
+    ]
+    
+    text_lower = text.lower()
+    
+    # Check for promotional keywords
+    has_promotional = any(keyword in text_lower for keyword in promotional_keywords)
+    
+    # Check for URLs
+    url_pattern = r'http[s]?://\S+|www\.\S+|\S+\.(com|net|org|io|co)\S*'
+    has_url = bool(re.search(url_pattern, text_lower))
+    
+    return has_promotional or has_url
+
+def detect_spam(text: str, user_id: int, post_id: int, db: Session) -> Dict:
+    """
+    Detect spam patterns for repeated comments by same user
+    
+    Spam Criteria:
+    1. Exact duplicate on same post = SPAM
+    2. 90%+ similar on same post = SPAM  
+    3. 5+ repetitions across different posts with promotional content = SPAM
+    4. 10+ exact repetitions across posts (regardless of content) = SPAM
+    5. Flooding: 7+ comments in 2 minutes = SPAM
+    
+    Returns: dict with is_spam, reasons, confidence, action
+    """
+    
+    spam_indicators = []
+    text_clean = text.strip()
+    
+    # Check 1: Exact duplicate on SAME post
+    duplicate_on_post = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id,
+        models.Comment.post_id == post_id,
+        models.Comment.text == text_clean,
+        models.Comment.status != "deleted"
+    ).first()
+    
+    if duplicate_on_post:
+        return {
+            "is_spam": True,
+            "reasons": ["exact_duplicate_on_post"],
+            "confidence": 100,
+            "action": "auto_hide",
+            "message": "Duplicate comment on same post"
+        }
+    
+    # Check 2: 90%+ similar on SAME post
+    user_comments_on_post = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id,
+        models.Comment.post_id == post_id,
+        models.Comment.status != "deleted"
+    ).order_by(models.Comment.created_at.desc()).limit(10).all()
+    
+    for comment in user_comments_on_post:
+        similarity = calculate_similarity(text_clean, comment.text)
+        if similarity >= 0.90:
+            spam_indicators.append("repetitive_on_same_post")
+            return {
+                "is_spam": True,
+                "reasons": ["repetitive_on_same_post"],
+                "confidence": 95,
+                "action": "auto_hide",
+                "message": f"Similar comment already exists on this post ({int(similarity*100)}% match)"
+            }
+    
+    # Check 3: Count exact/similar repetitions ACROSS ALL posts
+    all_user_comments = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id,
+        models.Comment.status != "deleted"
+    ).order_by(models.Comment.created_at.desc()).limit(50).all()
+    
+    exact_repetitions = 0
+    similar_repetitions = 0
+    
+    for comment in all_user_comments:
+        similarity = calculate_similarity(text_clean, comment.text)
+        if similarity == 1.0:
+            exact_repetitions += 1
+        elif similarity >= 0.85:
+            similar_repetitions += 1
+    
+    # Check if promotional/spam content
+    is_promotional = is_promotional_content(text_clean)
+    
+    # Rule: 10+ exact repetitions across posts = SPAM (always)
+    if exact_repetitions >= 10:
+        spam_indicators.append("excessive_repetition_global")
+        return {
+            "is_spam": True,
+            "reasons": ["excessive_repetition_global"],
+            "confidence": 100,
+            "action": "auto_hide",
+            "message": f"Comment repeated {exact_repetitions} times across posts"
+        }
+    
+    # Rule: 5+ repetitions with promotional content = SPAM
+    if (exact_repetitions >= 5 or similar_repetitions >= 5) and is_promotional:
+        spam_indicators.append("promotional_repetition")
+        return {
+            "is_spam": True,
+            "reasons": ["promotional_repetition"],
+            "confidence": 95,
+            "action": "auto_hide",
+            "message": f"Promotional content repeated {max(exact_repetitions, similar_repetitions)} times"
+        }
+    
+    # Check 4: Flooding - 5+ comments in 2 minutes
+    recent_comments = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id,
+        models.Comment.created_at > datetime.utcnow() - timedelta(minutes=2)
+    ).count()
+    
+    if recent_comments >= 7:
+        spam_indicators.append("flooding")
+        return {
+            "is_spam": True,
+            "reasons": ["flooding"],
+            "confidence": 90,
+            "action": "auto_hide",
+            "message": f"Too many comments in short time ({recent_comments} in 2 minutes)"
+        }
+    
+    # Warning: High repetition but not spam threshold yet
+    if exact_repetitions >= 3 and is_promotional:
+        return {
+            "is_spam": False,
+            "reasons": ["high_repetition_warning"],
+            "confidence": 50,
+            "action": "warning",
+            "message": f"Warning: Comment repeated {exact_repetitions} times. Continued repetition may result in spam detection."
+        }
+    
+    # Not spam
+    return {
+        "is_spam": False,
+        "reasons": [],
+        "confidence": 0,
+        "action": "allow",
+        "message": "No spam detected"
+    }

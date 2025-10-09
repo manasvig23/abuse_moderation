@@ -12,7 +12,7 @@ def load_abusive(filepath="abusive_words.txt"):
 
 abusive_words = load_abusive()
 
-# IMPROVED: More robust patterns with word boundaries and case insensitivity
+# Robust patterns with word boundaries and case insensitivity
 positive_context_patterns = [
     r"fucking (awesome|brilliant|amazing|great|good|cool|nice|perfect|excellent)",
     r"damn (good|great|awesome|cool|nice|impressive)",
@@ -21,7 +21,7 @@ positive_context_patterns = [
     r"stupid (simple|easy|obvious|clear|question|brilliant|good|but)"
 ]
 
-# FIXED: Added word boundaries and improved patterns
+#Word boundaries and improved patterns
 clearly_abusive_patterns = [
     r"\byou (are|'re) (stupid|idiot|dumb|fucking|an asshole|a bitch|shit)\b",
     r"\byou (stupid|dumb|fucking) (idiot|moron|bitch|asshole)\b",
@@ -36,7 +36,7 @@ clearly_abusive_patterns = [
     r"\bfucking (idiot|moron|stupid|dumb)\b",
     r"\bshut up\b.*\b(you )?(stupid|dumb|fucking|bitch|asshole|idiot)\b",
     
-    # ADDED: More abusive patterns
+    # More abusive patterns
     r"\byou suck\b",
     r"\bdie\b.*\b(bitch|asshole|idiot)\b",
     r"\b(get|go) (lost|away)\b.*\b(idiot|moron|stupid)\b",
@@ -271,9 +271,7 @@ if __name__ == "__main__":
         "You are an asshole",                  
         "You fucking idiot",                   
         "Shut up bitch",                       
-        "Go to hell",  # TEST THIS ONE
-        "go to hell",  # TEST THIS ONE  
-        "GO TO HELL", # TEST THIS ONE
+        "Go to hell",        
         "You stupid moron asshole",            
         
         # These should AUTO-APPROVE (positive context)
