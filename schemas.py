@@ -29,6 +29,21 @@ class Token(BaseModel):
     token_type: str
     user: UserResponse
 
+class PostDeletionRequest(BaseModel):
+    reason: str
+
+class DeletedPostResponse(BaseModel):
+    id: int
+    original_post_id: int
+    content: str
+    deletion_reason: str
+    deleted_at: datetime
+    deleted_by_username: str
+    viewed: bool
+    
+    class Config:
+        from_attributes = True
+
 # Post schemas
 class PostCreate(BaseModel):
     content: str
@@ -64,3 +79,4 @@ class CommentResponse(BaseModel):
 class ModerationAction(BaseModel):
     action: str  # "approve", "hide", "delete" 
     reason: Optional[str] = "No reason provided"
+

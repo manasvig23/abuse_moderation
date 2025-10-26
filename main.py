@@ -8,6 +8,7 @@ from email_config import email_service
 import os
 import uuid
 from sqlalchemy import func
+from schemas import PostDeletionRequest, DeletedPostResponse
 from datetime import timedelta, datetime
 from database import SessionLocal, engine, Base
 import models, schemas
@@ -432,6 +433,179 @@ async def create_comment(comment: schemas.CommentCreate,
         "auto_processed": True,
         "spam_detected": False
     }
+
+# ==================== POST DELETION ENDPOINTS ====================
+
+@app.delete("/api/posts/{post_id}")
+async def delete_own_post(
+    post_id: int,
+    deletion_data: PostDeletionRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """User deletes their own post"""
+    post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Only allow author to delete their own post
+    if post.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own posts")
+    
+    try:
+        # Store deleted post info (for user's own records, no notification needed)
+        deleted_post = models.DeletedPost(
+            original_post_id=post.id,
+            content=post.content,
+            author_id=post.author_id,
+            deleted_by=current_user.id,
+            deletion_reason=deletion_data.reason,
+            viewed=True  # Self-deletion, no notification needed
+        )
+        
+        db.add(deleted_post)
+        
+        # Delete the post (cascade will delete comments)
+        db.delete(post)
+        db.commit()
+        
+        return {
+            "message": "Post deleted successfully",
+            "post_id": post_id
+        }
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting post: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete post")
+
+
+@app.delete("/api/moderator/posts/{post_id}")
+async def moderator_delete_post(
+    post_id: int,
+    deletion_data: PostDeletionRequest,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """Moderator deletes a post with reason - sends notification to author"""
+    post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    try:
+        post_author = post.author
+        post_content = post.content
+        
+        # Create deleted post notification for author
+        deleted_post = models.DeletedPost(
+            original_post_id=post.id,
+            content=post_content,
+            author_id=post.author_id,
+            deleted_by=moderator.id,
+            deletion_reason=deletion_data.reason,
+            viewed=False  # User needs to see this
+        )
+        
+        db.add(deleted_post)
+        
+        # Delete the post
+        db.delete(post)
+        db.commit()
+        
+        # Send email notification
+        try:
+            from email_config import email_service
+            await email_service.send_email(
+                to_email=post_author.email,
+                subject="SafeSpace - Post Deleted by Moderator",
+                html_body=f"""
+                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>Post Deletion Notice</h2>
+                    <p>Dear {post_author.username},</p>
+                    <p>One of your posts has been deleted by a moderator.</p>
+                    <p><strong>Reason:</strong> {deletion_data.reason}</p>
+                    <p>You can view the post content and details in your account notifications.</p>
+                    <p>If you have questions, please contact support.</p>
+                </div>
+                """
+            )
+        except Exception as e:
+            print(f"Failed to send deletion email: {e}")
+        
+        return {
+            "message": f"Post deleted successfully. Notification sent to {post_author.username}",
+            "post_id": post_id,
+            "author_username": post_author.username
+        }
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting post: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete post")
+
+
+@app.get("/api/user/deleted-posts", response_model=list[DeletedPostResponse])
+def get_deleted_posts_notifications(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get user's deleted posts notifications"""
+    deleted_posts = db.query(models.DeletedPost).filter(
+        models.DeletedPost.author_id == current_user.id,
+        models.DeletedPost.viewed == False  # Only unviewed notifications
+    ).order_by(models.DeletedPost.deleted_at.desc()).all()
+    
+    result = []
+    for dp in deleted_posts:
+        deleter = db.query(models.User).filter(models.User.id == dp.deleted_by).first()
+        result.append({
+            "id": dp.id,
+            "original_post_id": dp.original_post_id,
+            "content": dp.content,
+            "deletion_reason": dp.deletion_reason,
+            "deleted_at": dp.deleted_at,
+            "deleted_by_username": deleter.username if deleter else "Unknown",
+            "viewed": dp.viewed
+        })
+    
+    return result
+
+
+@app.put("/api/user/deleted-posts/{deleted_post_id}/mark-viewed")
+def mark_deleted_post_as_viewed(
+    deleted_post_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Mark a deleted post notification as viewed"""
+    deleted_post = db.query(models.DeletedPost).filter(
+        models.DeletedPost.id == deleted_post_id,
+        models.DeletedPost.author_id == current_user.id
+    ).first()
+    
+    if not deleted_post:
+        raise HTTPException(status_code=404, detail="Deleted post notification not found")
+    
+    deleted_post.viewed = True
+    db.commit()
+    
+    return {"message": "Notification marked as viewed"}
+
+
+@app.get("/api/user/deleted-posts-count")
+def get_deleted_posts_count(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get count of unviewed deleted post notifications"""
+    count = db.query(models.DeletedPost).filter(
+        models.DeletedPost.author_id == current_user.id,
+        models.DeletedPost.viewed == False
+    ).count()
+    
+    return {"count": count}
 
 # ==================== MODERATOR ENDPOINTS ====================
 

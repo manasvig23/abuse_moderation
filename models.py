@@ -95,3 +95,20 @@ class UserBlock(Base):
     
     # Ensure unique blocking relationships
     __table_args__ = (Index('idx_blocker_blocked', 'blocker_id', 'blocked_id', unique=True),)
+
+class DeletedPost(Base):
+    """Store deleted posts for user notifications"""
+    __tablename__ = "deleted_posts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    original_post_id = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    author_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    deleted_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    deletion_reason = Column(String, nullable=False)
+    deleted_at = Column(DateTime, default=datetime.utcnow)
+    viewed = Column(Boolean, default=False)  # Track if user has seen the notification
+    
+    # Relationships
+    author = relationship("User", foreign_keys=[author_id])
+    deleter = relationship("User", foreign_keys=[deleted_by])
