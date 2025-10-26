@@ -13,7 +13,8 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, default="user")  # "user" or "moderator"
     created_at = Column(DateTime, default=datetime.utcnow)
-    is_active = Column(Boolean, default=True)  
+    is_active = Column(Boolean, default=True) 
+    last_login = Column(DateTime, nullable=True) 
 
     # Suspension fields
     is_suspended = Column(Boolean, default=False, index=True)

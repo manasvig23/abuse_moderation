@@ -9,42 +9,28 @@ DATABASE_URL = os.getenv(
 engine = create_engine(DATABASE_URL)
 
 def migrate():
-    """Add spam detection columns to comments table"""
+    """Add last_login column to users table"""
     with engine.connect() as conn:
         try:
-            print("Starting migration...")
+            print("Starting migration to add last_login...")
             
-            # Add is_spam column
+            # Add last_login column
             conn.execute(text("""
-                ALTER TABLE comments 
-                ADD COLUMN IF NOT EXISTS is_spam INTEGER DEFAULT 0
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS last_login TIMESTAMP
             """))
-            print("✓ Added is_spam column")
+            print("✓ Added last_login column")
             
-            # Add index on is_spam
+            # Add index on last_login for performance
             conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_comments_is_spam 
-                ON comments(is_spam)
+                CREATE INDEX IF NOT EXISTS idx_users_last_login 
+                ON users(last_login)
             """))
-            print("✓ Added index on is_spam")
-            
-            # Add spam_reasons column
-            conn.execute(text("""
-                ALTER TABLE comments 
-                ADD COLUMN IF NOT EXISTS spam_reasons VARCHAR
-            """))
-            print("✓ Added spam_reasons column")
-            
-            # Add spam_confidence column
-            conn.execute(text("""
-                ALTER TABLE comments 
-                ADD COLUMN IF NOT EXISTS spam_confidence INTEGER DEFAULT 0
-            """))
-            print("✓ Added spam_confidence column")
+            print("✓ Added index on last_login")
             
             conn.commit()
             print("\nMigration completed successfully!")
-            print("Spam detection fields added to database.")
+            print("last_login field added to users table.")
             
         except Exception as e:
             print(f"\nMigration failed: {e}")

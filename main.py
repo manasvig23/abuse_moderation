@@ -99,6 +99,9 @@ async def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_d
             detail="Incorrect username or password"
         )
     
+    user.last_login = datetime.utcnow()
+    db.commit()
+    
     # Check if user is suspended
     if user.is_suspended:
         raise HTTPException(
@@ -279,7 +282,7 @@ def create_post(post: schemas.PostCreate,
 async def create_comment(comment: schemas.CommentCreate, 
                   current_user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    """Post a comment with spam and abuse monitoring"""
+    """Post a comment with ABUSE and spam monitoring"""
     
     from spam_detection import detect_spam
     
@@ -292,15 +295,69 @@ async def create_comment(comment: schemas.CommentCreate,
     if len(comment.text) > 1000:
         raise HTTPException(status_code=400, detail="Comment too long (max 1000 characters)")
     
-    # STEP 1: Check for SPAM first (before abuse detection)
+    # STEP 1: Check for ABUSE FIRST (Primary detection)
+    review_result = is_abusive_with_auto_review(comment.text)
+    
+    # If abusive, handle immediately (don't check spam)
+    if review_result["is_abusive"] == 1:
+        # Determine status based on auto-review
+        if review_result["auto_action"] in ["approve", "auto_approve"]:
+            comment_status = "approved"
+            visible_in_feed = True
+        else:
+            comment_status = "hidden" if review_result["auto_action"] == "keep_hidden" else "pending_review"
+            visible_in_feed = False
+        
+        # Create abusive comment
+        db_comment = models.Comment(
+            text=comment.text,
+            is_spam=0,
+            is_abusive=review_result["is_abusive"],
+            status=comment_status,
+            confidence_score=int(review_result["confidence"] * 100),
+            flagged_words=",".join(review_result["flagged_words"]) if review_result["flagged_words"] else None,
+            auto_review_action=review_result["auto_action"],
+            auto_review_reason=review_result["reason"],
+            user_id=current_user.id,
+            post_id=comment.post_id
+        )
+        
+        db.add(db_comment)
+        db.commit()
+        db.refresh(db_comment)
+        
+        # Check user abuse rate
+        await check_and_handle_user_abuse(current_user.id, db)
+        
+        return {
+            "message": "Comment flagged for abuse",
+            "comment_id": db_comment.id,
+            "visible_in_feed": visible_in_feed,
+            "auto_processed": review_result["auto_action"] != "human_review_needed",
+            "spam_detected": False,
+            "abuse_detected": True
+        }
+    
+    # STEP 2: If NOT abusive, check for SPAM
     spam_result = detect_spam(comment.text, current_user.id, comment.post_id, db)
     
     if spam_result["is_spam"]:
+        # Hide all promotional comments if needed
+        if spam_result.get("hide_all") and spam_result.get("similar_comment_ids"):
+            for comment_id in spam_result["similar_comment_ids"]:
+                old_comment = db.query(models.Comment).filter(
+                    models.Comment.id == comment_id
+                ).first()
+                if old_comment:
+                    old_comment.status = "hidden"
+                    old_comment.is_spam = 1
+            db.commit()
+        
         # Create spam comment (hidden)
         db_comment = models.Comment(
             text=comment.text,
             is_spam=1,
-            is_abusive=0,  # Not checking abuse for spam
+            is_abusive=0,
             status="hidden",
             spam_reasons=",".join(spam_result["reasons"]),
             spam_confidence=spam_result["confidence"],
@@ -323,34 +380,42 @@ async def create_comment(comment: schemas.CommentCreate,
             "spam_message": spam_result["message"]
         }
     
-    # Warning case (not spam yet, but high repetition)
+    # Warning case (hide warning comments too)
     if spam_result["action"] == "warning":
-        # Show warning but allow comment to proceed to abuse check
-        warning_message = spam_result["message"]
-    else:
-        warning_message = None
+        db_comment = models.Comment(
+            text=comment.text,
+            is_spam=0,
+            is_abusive=0,
+            status="approved",
+            spam_reasons=",".join(spam_result["reasons"]),
+            spam_confidence=spam_result["confidence"],
+            auto_review_action="warning_spam",
+            auto_review_reason=spam_result["message"],
+            user_id=current_user.id,
+            post_id=comment.post_id
+        )
+        db.add(db_comment)
+        db.commit()
+        db.refresh(db_comment)
+        
+        return {
+            "message": "Comment posted successfully",
+            "comment_id": db_comment.id,
+            "visible_in_feed": True,
+            "auto_processed": True,
+            "spam_detected": False,
+            "warning": spam_result["message"]
+        }
     
-    # STEP 2: If not spam, check for ABUSE
-    review_result = is_abusive_with_auto_review(comment.text)
-    
-    # Determine status based on auto-review
-    if review_result["auto_action"] in ["approve", "auto_approve"]:
-        comment_status = "approved"
-        visible_in_feed = True
-    else:
-        comment_status = "hidden" if review_result["auto_action"] == "keep_hidden" else "pending_review"
-        visible_in_feed = False
-    
-    # Create comment
+    # STEP 3: If neither abusive nor spam, APPROVE
     db_comment = models.Comment(
         text=comment.text,
-        is_spam=0,  # Not spam
-        is_abusive=review_result["is_abusive"],
-        status=comment_status,
-        confidence_score=int(review_result["confidence"] * 100),
-        flagged_words=",".join(review_result["flagged_words"]) if review_result["flagged_words"] else None,
-        auto_review_action=review_result["auto_action"],
-        auto_review_reason=review_result["reason"],
+        is_spam=0,
+        is_abusive=0,
+        status="approved",
+        confidence_score=0,
+        auto_review_action="approve",
+        auto_review_reason="clean_comment",
         user_id=current_user.id,
         post_id=comment.post_id
     )
@@ -359,22 +424,13 @@ async def create_comment(comment: schemas.CommentCreate,
     db.commit()
     db.refresh(db_comment)
     
-    # Check user abuse rate after comment creation
-    await check_and_handle_user_abuse(current_user.id, db)
-    
-    response = {
+    return {
         "message": "Comment posted successfully",
         "comment_id": db_comment.id,
-        "visible_in_feed": visible_in_feed,
-        "auto_processed": review_result["auto_action"] != "human_review_needed",
+        "visible_in_feed": True,
+        "auto_processed": True,
         "spam_detected": False
     }
-    
-    # Add warning if present
-    if warning_message:
-        response["warning"] = warning_message
-    
-    return response
 
 # ==================== MODERATOR ENDPOINTS ====================
 
@@ -403,6 +459,28 @@ def get_all_users_list(
             models.Comment.status == "approved"
         ).count()
         
+        is_recently_active = False
+        last_activity = "Never"
+        
+        if user.last_login:
+            time_since_login = datetime.utcnow() - user.last_login
+            is_recently_active = time_since_login < timedelta(hours=24)
+            
+            # Format last login time
+            if time_since_login < timedelta(minutes=1):
+                last_activity = "Just now"
+            elif time_since_login < timedelta(hours=1):
+                minutes = int(time_since_login.total_seconds() / 60)
+                last_activity = f"{minutes} min ago"
+            elif time_since_login < timedelta(days=1):
+                hours = int(time_since_login.total_seconds() / 3600)
+                last_activity = f"{hours} hour{'s' if hours > 1 else ''} ago"
+            elif time_since_login < timedelta(days=7):
+                days = time_since_login.days
+                last_activity = f"{days} day{'s' if days > 1 else ''} ago"
+            else:
+                last_activity = user.last_login.strftime("%Y-%m-%d")
+
         users_data.append({
             "id": user.id,
             "username": user.username,
@@ -734,6 +812,7 @@ def get_statistics(
         
         pending_comments = db.query(models.Comment).filter(
             models.Comment.user_id == user.id,
+            models.Comment.status == "pending_review",
             models.Comment.auto_review_action == "human_review_needed"
         ).count()
         
@@ -799,7 +878,8 @@ def get_statistics(
         ).count()
         
         needs_review = db.query(models.Comment).filter(
-            models.Comment.auto_review_action == "human_review_needed"
+            models.Comment.auto_review_action == "human_review_needed",
+            models.Comment.status == "pending_review"
         ).count()
         
         auto_hidden = db.query(models.Comment).filter(

@@ -32,10 +32,9 @@ def is_promotional_content(text: str) -> bool:
 
 def detect_spam(text: str, user_id: int, post_id: int, db: Session) -> Dict:
     """
-    SIMPLIFIED Spam Detection - Only 2 cases:
-    
-    1. Promotional content repeated 5+ times on SAME POST by SAME USER
-    2. Same comment repeated 10+ times on SAME POST by SAME USER
+    Spam Detection Logic:
+    1. Promotional: Allow 3 → Warning at 4 → Spam at 5 (HIDE ALL 5)
+    2. Repetitive: Allow 5 → Warning at 6 → Spam at 7 (HIDE warning + spam only)
     
     Returns: dict with is_spam, reasons, confidence, action, message
     """
@@ -52,55 +51,64 @@ def detect_spam(text: str, user_id: int, post_id: int, db: Session) -> Dict:
     # Count exact and similar repetitions ON THIS POST ONLY
     exact_count = 0
     similar_count = 0
+    similar_comment_ids = []  # Track IDs for hiding
     
     for comment in user_comments_on_this_post:
         similarity = calculate_similarity(text_clean, comment.text)
         if similarity == 1.0:
             exact_count += 1
+            similar_comment_ids.append(comment.id)
         elif similarity >= 0.85:
             similar_count += 1
+            similar_comment_ids.append(comment.id)
     
     # Check if content is promotional
     is_promotional = is_promotional_content(text_clean)
     
-    # CASE 1: Promotional content repeated 5+ times on SAME POST
-    if is_promotional and (exact_count >= 5 or similar_count >= 5):
+    total_repetitions = max(exact_count, similar_count)
+    
+    # CASE 1: Promotional spam at 5th repetition - HIDE ALL
+    if is_promotional and total_repetitions >= 4:
         return {
             "is_spam": True,
             "reasons": ["promotional_repetition_same_post"],
             "confidence": 95,
             "action": "auto_hide",
-            "message": f"🚫 Spam Detected! Promotional content repeated {max(exact_count, similar_count)} times on this post. Your comment has been hidden."
+            "hide_all": True,  # NEW: Flag to hide all similar comments
+            "similar_comment_ids": similar_comment_ids,  # NEW: IDs to hide
+            "message": f"🚫 Spam Detected! Promotional content repeated {total_repetitions + 1} times on this post. All promotional comments have been hidden."
         }
     
-    # CASE 2: Same comment repeated 10+ times on SAME POST (regardless of content)
-    if exact_count >= 10 or similar_count >= 10:
+    # CASE 2: Repetitive spam at 7th repetition - HIDE warning + spam only
+    if total_repetitions >= 6:
         return {
             "is_spam": True,
             "reasons": ["excessive_repetition_same_post"],
             "confidence": 100,
             "action": "auto_hide",
-            "message": f"🚫 Spam Detected! Comment repeated {max(exact_count, similar_count)} times on this post. Your comment has been hidden."
+            "hide_all": False,  # NEW: Don't hide all, only recent ones
+            "similar_comment_ids": [],  # No bulk hiding
+            "message": f"🚫 Spam Detected! Comment repeated {total_repetitions + 1} times on this post. Recent repetitive comments have been hidden."
         }
     
-    # Warning for promotional content (3-4 times on same post)
-    if is_promotional and (exact_count >= 3 or similar_count >= 3):
+    # Warning for promotional content (4th repetition)
+    if is_promotional and total_repetitions >= 3:
         return {
             "is_spam": False,
             "reasons": ["promotional_warning"],
             "confidence": 50,
             "action": "warning",
-            "message": f"⚠️ Warning: You've posted similar promotional content {max(exact_count, similar_count)} times on this post. Further repetition may result in spam detection."
+            "message": f"⚠️ Warning: You've posted similar promotional content {total_repetitions + 1} times on this post. One more repetition will result in all promotional comments being hidden."
         }
     
-    # Warning for excessive repetition (7-9 times on same post)
-    if exact_count >= 7 or similar_count >= 7:
+    # Warning for repetitive content (6th repetition)
+    if total_repetitions >= 5:
         return {
             "is_spam": False,
             "reasons": ["repetition_warning"],
             "confidence": 50,
             "action": "warning",
-            "message": f"⚠️ Warning: You've posted similar comments {max(exact_count, similar_count)} times on this post. Further repetition may result in spam detection."
+            "message": f"⚠️ Warning: You've posted similar comments {total_repetitions + 1} times on this post. Further repetition will result in spam detection."
         }
     
     # Not spam
