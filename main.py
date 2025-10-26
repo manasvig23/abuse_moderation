@@ -959,6 +959,142 @@ def review_comment(comment_id: int,
         "action_taken": action.action
     }
 
+@app.delete("/api/moderator/users/{user_id}")
+async def delete_user_account(
+    user_id: int,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """
+    Permanently delete a user account and all associated data.
+    This is a destructive operation that cannot be undone.
+    """
+    # Get the user to delete
+    user_to_delete = db.query(models.User).filter(models.User.id == user_id).first()
+    
+    if not user_to_delete:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Prevent self-deletion
+    if user_to_delete.id == moderator.id:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot delete your own account"
+        )
+    
+    # Prevent deletion of other moderators (optional safety check)
+    if user_to_delete.role == "moderator":
+        raise HTTPException(
+            status_code=403, 
+            detail="Cannot delete moderator accounts"
+        )
+    
+    try:
+        # Store user info for logging
+        deleted_username = user_to_delete.username
+        deleted_email = user_to_delete.email
+        
+        # Delete all user's posts (cascade will handle comments on those posts)
+        db.query(models.Post).filter(models.Post.author_id == user_id).delete()
+        
+        # Delete all user's comments on other posts
+        db.query(models.Comment).filter(models.Comment.user_id == user_id).delete()
+        
+        # Delete user blocks (both as blocker and blocked)
+        db.query(models.UserBlock).filter(
+            (models.UserBlock.blocker_id == user_id) | 
+            (models.UserBlock.blocked_id == user_id)
+        ).delete()
+        
+        # Finally, delete the user account
+        db.delete(user_to_delete)
+        db.commit()
+        
+        # Optional: Send deletion confirmation email
+        try:
+            await email_service.send_email(
+                to_email=deleted_email,
+                subject="Account Deleted - SafeSpace",
+                html_body=f"""
+                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>Account Deletion Confirmation</h2>
+                    <p>Dear {deleted_username},</p>
+                    <p>Your SafeSpace account has been permanently deleted by a moderator.</p>
+                    <p>All your posts, comments, and personal data have been removed from our system.</p>
+                    <p>If you believe this was done in error, please contact our support team.</p>
+                    <p>Thank you for being part of SafeSpace.</p>
+                </div>
+                """
+            )
+        except Exception as e:
+            print(f"Failed to send deletion email: {e}")
+        
+        return {
+            "message": f"User account '{deleted_username}' deleted successfully",
+            "deleted_user_id": user_id,
+            "deleted_username": deleted_username,
+            "deleted_by": moderator.username,
+            "deleted_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting user: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to delete user account"
+        )
+
+
+@app.get("/api/moderator/users/{user_id}/deletion-impact")
+def check_deletion_impact(
+    user_id: int,
+    moderator: models.User = Depends(get_current_moderator),
+    db: Session = Depends(get_db)
+):
+    """
+    Check what will be deleted before confirming user deletion.
+    Shows the impact/preview of deletion.
+    """
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Count associated data
+    posts_count = db.query(models.Post).filter(
+        models.Post.author_id == user_id
+    ).count()
+    
+    comments_count = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id
+    ).count()
+    
+    # Count comments on user's posts (will also be deleted)
+    comments_on_posts = db.query(models.Comment).join(
+        models.Post, models.Comment.post_id == models.Post.id
+    ).filter(models.Post.author_id == user_id).count()
+    
+    blocks_count = db.query(models.UserBlock).filter(
+        (models.UserBlock.blocker_id == user_id) | 
+        (models.UserBlock.blocked_id == user_id)
+    ).count()
+    
+    return {
+        "user_id": user_id,
+        "username": user.username,
+        "email": user.email,
+        "impact": {
+            "posts_to_delete": posts_count,
+            "comments_to_delete": comments_count,
+            "comments_on_posts_to_delete": comments_on_posts,
+            "total_comments_affected": comments_count + comments_on_posts,
+            "blocks_to_remove": blocks_count
+        },
+        "warning": "This action is permanent and cannot be undone",
+        "can_delete": user.role != "moderator"
+    }
+
 @app.get("/api/user/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_user)):
     """Get current user information for UI display"""
