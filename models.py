@@ -11,7 +11,7 @@ class User(Base):
     
     # Authentication fields
     password_hash = Column(String, nullable=False)
-    role = Column(String, default="user")  # "user" or "moderator"
+    role = Column(String, default="user")  # "user", "moderator" or "admin"
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True) 
     last_login = Column(DateTime, nullable=True) 
@@ -20,6 +20,7 @@ class User(Base):
     is_suspended = Column(Boolean, default=False, index=True)
     suspended_at = Column(DateTime, nullable=True)
     suspension_reason = Column(String, nullable=True)
+    suspended_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     suspension_appeal_count = Column(Integer, default=0)
     
     # Email verification fields
@@ -33,6 +34,7 @@ class User(Base):
     # Relationships
     posts = relationship("Post", back_populates="author", foreign_keys="Post.author_id")
     comments = relationship("Comment", back_populates="author", foreign_keys="Comment.user_id")
+    suspended_users = relationship("User", foreign_keys=[suspended_by], remote_side=[id])
 
 class Post(Base):
     __tablename__ = "posts"

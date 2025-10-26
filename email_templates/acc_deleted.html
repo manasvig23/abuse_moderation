@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Deleted - SafeSpace</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f5f7fa; 
+            margin: 0; 
+            padding: 20px; 
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: white; 
+            border-radius: 12px; 
+            overflow: hidden; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1); 
+        }
+        .header { 
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); 
+            color: white; 
+            padding: 30px; 
+            text-align: center; 
+        }
+        .header h1 { 
+            margin: 0; 
+            font-size: 28px; 
+            font-weight: 600; 
+        }
+        .content { 
+            padding: 30px; 
+        }
+        .deletion-box { 
+            background: #fadbd8; 
+            border: 1px solid #e74c3c; 
+            border-radius: 8px; 
+            padding: 20px; 
+            margin: 20px 0; 
+        }
+        .reason-box { 
+            background: #f8f9fa; 
+            border-left: 4px solid #e74c3c; 
+            padding: 20px; 
+            margin: 20px 0; 
+        }
+        .info-box { 
+            background: #e8f4fd; 
+            border: 1px solid #3498db; 
+            border-radius: 8px; 
+            padding: 20px; 
+            margin: 20px 0; 
+        }
+        .footer { 
+            text-align: center; 
+            padding: 20px; 
+            color: #7f8c8d; 
+            font-size: 14px; 
+            background: #f8f9fa; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚫 Account Deleted</h1>
+        </div>
+        <div class="content">
+            <p style="font-size: 18px; color: #2c3e50;">Hi <strong>{{ username }}</strong>,</p>
+            
+            <div class="deletion-box">
+                <h3 style="margin-top: 0; color: #c0392b;">Your SafeSpace account has been permanently deleted</h3>
+                <p>Your account and all associated data have been removed from our system by a moderator.</p>
+            </div>
+            
+            <div class="reason-box">
+                <h4 style="margin-top: 0; color: #2c3e50;">Deletion Details:</h4>
+                <p><strong>Deleted by:</strong> {{ deleted_by }}</p>
+                <p><strong>Reason:</strong> {{ reason }}</p>
+                <p><strong>Date:</strong> {{ current_year }}</p>
+            </div>
+            
+            <h4>What this means:</h4>
+            <ul>
+                <li>Your account has been permanently deleted</li>
+                <li>All your posts and comments have been removed</li>
+                <li>Your personal data has been erased from our system</li>
+                <li>You cannot access your account anymore</li>
+                <li>This action cannot be reversed</li>
+            </ul>
+            
+            <div class="info-box">
+                <h4 style="margin-top: 0; color: #2c3e50;">📧 Questions or Concerns?</h4>
+                <p>If you believe this deletion was made in error or have questions about this action:</p>
+                <ul>
+                    <li>Email us at: <strong>{{ support_email }}</strong></li>
+                    <li>Subject: "Account Deletion Appeal - {{ username }}"</li>
+                    <li>Our team will review your case within 3-5 business days</li>
+                </ul>
+            </div>
+            
+            <p>We take platform safety seriously. If you wish to create a new account in the future, please ensure you follow our community guidelines.</p>
+            
+            <p style="color: #7f8c8d; font-size: 14px; font-style: italic;">
+                This is an automated message from the SafeSpace moderation system.
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{ current_year }} SafeSpace. Committed to community safety.</p>
+        </div>
+    </div>
+</body>
+</html>

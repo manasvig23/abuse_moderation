@@ -127,3 +127,12 @@ def create_default_moderator(db: Session):
         return admin_user
     
     return existing_mod
+
+def get_current_admin(current_user: models.User = Depends(get_current_user)):
+    """Ensure current user is the admin"""
+    if current_user.username != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return current_user

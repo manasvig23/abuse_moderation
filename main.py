@@ -21,8 +21,6 @@ from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 
-
-
 # Create tables
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Abuse Moderation API", version="1.0.0")
@@ -59,12 +57,15 @@ async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
         # Generate email verification token
         verification_token = str(uuid.uuid4())
         
+        # Validate role - only allow 'user' and 'moderator' during registration
+        valid_role = user.role if user.role in ["user", "moderator"] else "user"
+        
         # Create user
         db_user = models.User(
             username=user.username,
             email=user.email,
             password_hash=hash_password(user.password),
-            role=user.role,
+            role=valid_role,
             email_verification_token=verification_token
         )
         
@@ -87,7 +88,7 @@ async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         print(f"Registration error: {e}")
-        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @app.post("/api/login", response_model=schemas.Token)
 async def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_db)):
@@ -821,7 +822,6 @@ def get_statistics(
             models.Comment.is_abusive == 1
         ).count()
         
-        # NEW: Add spam comments count
         spam_comments = db.query(models.Comment).filter(
             models.Comment.user_id == user.id,
             models.Comment.is_spam == 1
@@ -849,9 +849,9 @@ def get_statistics(
                 "hidden_comments": hidden_comments,
                 "pending_comments": pending_comments,
                 "flagged_comments": flagged_comments,
-                "spam_comments": spam_comments,  # NEW
+                "spam_comments": spam_comments,
                 "abuse_rate_percent": abuse_rate,
-                "spam_rate_percent": spam_rate  # NEW
+                "spam_rate_percent": spam_rate
             }
         }
     
@@ -865,14 +865,13 @@ def get_statistics(
         clean_comments = db.query(models.Comment).filter(
             models.Comment.status == "approved",
             models.Comment.is_abusive == 0,
-            models.Comment.is_spam == 0  # NEW: Exclude spam
+            models.Comment.is_spam == 0
         ).count()
         
         flagged_comments = db.query(models.Comment).filter(
             models.Comment.is_abusive == 1
         ).count()
         
-        # NEW: Add spam statistics
         spam_comments = db.query(models.Comment).filter(
             models.Comment.is_spam == 1
         ).count()
@@ -883,7 +882,7 @@ def get_statistics(
         ).count()
         
         auto_hidden = db.query(models.Comment).filter(
-            models.Comment.auto_review_action.in_(["keep_hidden", "auto_hide_spam"])  # Include spam
+            models.Comment.auto_review_action.in_(["keep_hidden", "auto_hide_spam"])
         ).count()
         
         auto_approved = db.query(models.Comment).filter(
@@ -894,7 +893,7 @@ def get_statistics(
         ai_processed = auto_approved + auto_hidden
         ai_efficiency = round((ai_processed / total_comments) * 100, 1) if total_comments > 0 else 0
         abuse_detection_rate = round((flagged_comments / total_comments) * 100, 1) if total_comments > 0 else 0
-        spam_detection_rate = round((spam_comments / total_comments) * 100, 1) if total_comments > 0 else 0  # NEW
+        spam_detection_rate = round((spam_comments / total_comments) * 100, 1) if total_comments > 0 else 0
         
         return {
             "type": "overall_stats",
@@ -907,13 +906,13 @@ def get_statistics(
                 "total_comments": total_comments,
                 "clean_comments": clean_comments,
                 "flagged_comments": flagged_comments,
-                "spam_comments": spam_comments,  # NEW
+                "spam_comments": spam_comments,
                 "needs_review": needs_review,
                 "auto_hidden": auto_hidden,
                 "auto_approved": auto_approved,
                 "ai_efficiency_percent": ai_efficiency,
                 "abuse_detection_rate": abuse_detection_rate,
-                "spam_detection_rate": spam_detection_rate  # NEW
+                "spam_detection_rate": spam_detection_rate
             },
             "message": "Select a user from dropdown to view user-specific statistics"
         }
@@ -947,7 +946,6 @@ def review_comment(comment_id: int,
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Use: approve, hide, delete")
     
-    
     comment.moderated_by = moderator.id
     comment.moderated_at = datetime.utcnow()
     
@@ -965,52 +963,32 @@ async def delete_user_account(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """
-    Permanently delete a user account and all associated data.
-    This is a destructive operation that cannot be undone.
-    """
-    # Get the user to delete
+    """Permanently delete a user account and all associated data"""
     user_to_delete = db.query(models.User).filter(models.User.id == user_id).first()
     
     if not user_to_delete:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Prevent self-deletion
     if user_to_delete.id == moderator.id:
-        raise HTTPException(
-            status_code=400, 
-            detail="Cannot delete your own account"
-        )
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
-    # Prevent deletion of other moderators (optional safety check)
     if user_to_delete.role == "moderator":
-        raise HTTPException(
-            status_code=403, 
-            detail="Cannot delete moderator accounts"
-        )
+        raise HTTPException(status_code=403, detail="Cannot delete moderator accounts")
     
     try:
-        # Store user info for logging
         deleted_username = user_to_delete.username
         deleted_email = user_to_delete.email
         
-        # Delete all user's posts (cascade will handle comments on those posts)
         db.query(models.Post).filter(models.Post.author_id == user_id).delete()
-        
-        # Delete all user's comments on other posts
         db.query(models.Comment).filter(models.Comment.user_id == user_id).delete()
-        
-        # Delete user blocks (both as blocker and blocked)
         db.query(models.UserBlock).filter(
             (models.UserBlock.blocker_id == user_id) | 
             (models.UserBlock.blocked_id == user_id)
         ).delete()
         
-        # Finally, delete the user account
         db.delete(user_to_delete)
         db.commit()
         
-        # Optional: Send deletion confirmation email
         try:
             await email_service.send_email(
                 to_email=deleted_email,
@@ -1040,11 +1018,7 @@ async def delete_user_account(
     except Exception as e:
         db.rollback()
         print(f"Error deleting user: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Failed to delete user account"
-        )
-
+        raise HTTPException(status_code=500, detail="Failed to delete user account")
 
 @app.get("/api/moderator/users/{user_id}/deletion-impact")
 def check_deletion_impact(
@@ -1052,29 +1026,17 @@ def check_deletion_impact(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """
-    Check what will be deleted before confirming user deletion.
-    Shows the impact/preview of deletion.
-    """
+    """Check what will be deleted before confirming user deletion"""
     user = db.query(models.User).filter(models.User.id == user_id).first()
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Count associated data
-    posts_count = db.query(models.Post).filter(
-        models.Post.author_id == user_id
-    ).count()
-    
-    comments_count = db.query(models.Comment).filter(
-        models.Comment.user_id == user_id
-    ).count()
-    
-    # Count comments on user's posts (will also be deleted)
+    posts_count = db.query(models.Post).filter(models.Post.author_id == user_id).count()
+    comments_count = db.query(models.Comment).filter(models.Comment.user_id == user_id).count()
     comments_on_posts = db.query(models.Comment).join(
         models.Post, models.Comment.post_id == models.Post.id
     ).filter(models.Post.author_id == user_id).count()
-    
     blocks_count = db.query(models.UserBlock).filter(
         (models.UserBlock.blocker_id == user_id) | 
         (models.UserBlock.blocked_id == user_id)
@@ -1094,6 +1056,117 @@ def check_deletion_impact(
         "warning": "This action is permanent and cannot be undone",
         "can_delete": user.role != "moderator"
     }
+
+# ==================== ADMIN ENDPOINTS ====================
+
+def get_current_admin(current_user: models.User = Depends(get_current_user)):
+    """Ensure current user is the admin"""
+    if current_user.username != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return current_user
+
+@app.get("/api/admin/moderators")
+def get_all_moderators(
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Admin: Get all moderators list"""
+    moderators = db.query(models.User).filter(
+        models.User.role == "moderator"
+    ).order_by(models.User.created_at.desc()).all()
+    
+    moderators_data = []
+    for mod in moderators:
+        moderated_comments = db.query(models.Comment).filter(
+            models.Comment.moderated_by == mod.id
+        ).count()
+        
+        moderators_data.append({
+            "id": mod.id,
+            "username": mod.username,
+            "email": mod.email,
+            "role": mod.role,
+            "is_active": mod.is_active,
+            "is_suspended": mod.is_suspended,
+            "created_at": mod.created_at,
+            "last_login": mod.last_login,
+            "moderated_comments": moderated_comments,
+            "can_suspend": mod.username != "admin",
+            "can_delete": mod.username != "admin"
+        })
+    
+    return {"moderators": moderators_data}
+
+@app.put("/api/admin/moderators/{moderator_id}/suspend")
+async def suspend_moderator(
+    moderator_id: int,
+    suspension_data: dict,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Admin: Suspend a moderator"""
+    moderator = db.query(models.User).filter(models.User.id == moderator_id).first()
+    
+    if not moderator:
+        raise HTTPException(status_code=404, detail="Moderator not found")
+    
+    if moderator.username == "admin":
+        raise HTTPException(status_code=403, detail="Cannot suspend admin account")
+    
+    moderator.is_suspended = True
+    moderator.is_active = False
+    moderator.suspended_at = datetime.utcnow()
+    moderator.suspension_reason = suspension_data.get("reason", "Policy violation")
+    db.commit()
+    
+    return {"message": f"Moderator '{moderator.username}' suspended successfully"}
+
+@app.put("/api/admin/moderators/{moderator_id}/unsuspend")
+async def unsuspend_moderator(
+    moderator_id: int,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Admin: Unsuspend a moderator"""
+    moderator = db.query(models.User).filter(models.User.id == moderator_id).first()
+    
+    if not moderator:
+        raise HTTPException(status_code=404, detail="Moderator not found")
+    
+    moderator.is_suspended = False
+    moderator.is_active = True
+    moderator.suspended_at = None
+    moderator.suspension_reason = None
+    db.commit()
+    
+    return {"message": f"Moderator '{moderator.username}' unsuspended successfully"}
+
+@app.delete("/api/admin/moderators/{moderator_id}")
+async def delete_moderator(
+    moderator_id: int,
+    deletion_data: dict,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Admin: Delete a moderator"""
+    moderator = db.query(models.User).filter(models.User.id == moderator_id).first()
+    
+    if not moderator:
+        raise HTTPException(status_code=404, detail="Moderator not found")
+    
+    if moderator.username == "admin":
+        raise HTTPException(status_code=403, detail="Cannot delete admin account")
+    
+    deleted_username = moderator.username
+    db.delete(moderator)
+    db.commit()
+    
+    return {"message": f"Moderator '{deleted_username}' deleted permanently"}
+
+# ==================== UTILITY ENDPOINTS ====================
 
 @app.get("/api/user/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_user)):
