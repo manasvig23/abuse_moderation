@@ -9,7 +9,6 @@ import os
 import uuid
 from sqlalchemy import func
 from schemas import PostDeletionRequest, DeletedPostResponse
-from datetime import timedelta, datetime
 from database import SessionLocal, engine, Base
 import models, schemas
 from filter import is_abusive_with_auto_review
@@ -21,6 +20,9 @@ from auth import (
     get_current_moderator,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
+from datetime import datetime, timedelta
+import pytz
+INDIA_TZ = pytz.timezone('Asia/Kolkata')
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -41,6 +43,10 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def get_india_time():
+    """Get current time in India timezone"""
+    return datetime.now(INDIA_TZ).replace(tzinfo=None)
 
 # Authentication Endpoints
 @app.post("/api/register", response_model=schemas.UserResponse)
@@ -123,10 +129,10 @@ async def login(user_credentials: schemas.UserLogin, db: Session = Depends(get_d
     }
 
 async def check_and_handle_user_abuse(user_id: int, db: Session):
-    """Monitor user abuse rate and take action"""
+    """Monitor user abuse rate and take action - RETURN suspension status"""
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
-        return
+        return False
     
     # Calculate abuse rate
     total_comments = db.query(models.Comment).filter(models.Comment.user_id == user_id).count()
@@ -135,8 +141,8 @@ async def check_and_handle_user_abuse(user_id: int, db: Session):
         models.Comment.is_abusive == 1
     ).count()
     
-    if total_comments < 5:  # Not enough data
-        return
+    if total_comments < 5:
+        return False
     
     abuse_rate = (flagged_comments / total_comments) * 100
     
@@ -155,6 +161,8 @@ async def check_and_handle_user_abuse(user_id: int, db: Session):
             )
         except Exception as e:
             print(f"Failed to send warning email: {e}")
+        
+        return False
     
     # Suspension threshold (70% abuse rate)
     elif abuse_rate >= 70 and not user.is_suspended:
@@ -171,6 +179,10 @@ async def check_and_handle_user_abuse(user_id: int, db: Session):
             )
         except Exception as e:
             print(f"Failed to send suspension email: {e}")
+        
+        return True #User was suspended
+    
+    return False
 
 # ==================== USER ENDPOINTS ====================
 
@@ -222,17 +234,18 @@ def get_explore_feed(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Explore Feed page - Shows 'Discover Posts' from other users"""
-    other_posts = db.query(models.Post).filter(
-        models.Post.author_id != current_user.id
+    """Explore Feed page - Shows 'Discover Posts' from other users (EXCLUDING SUSPENDED)"""
+    other_posts = db.query(models.Post).join(models.User).filter(
+        models.Post.author_id != current_user.id,
+        models.User.is_suspended == False  # NEW: Exclude suspended users
     ).order_by(models.Post.created_at.desc()).all()
     
     result = []
     for post in other_posts:
-        # Show only approved comments for other users' posts
+        # Show only approved comments from NON-SUSPENDED users
         approved_comments = []
         for c in post.comments:
-            if c.status == "approved":
+            if c.status == "approved" and not c.author.is_suspended:  # NEW: Check author suspension
                 approved_comments.append({
                     "id": c.id,
                     "text": c.text,
@@ -328,8 +341,8 @@ async def create_comment(comment: schemas.CommentCreate,
         db.commit()
         db.refresh(db_comment)
         
-        # Check user abuse rate
-        await check_and_handle_user_abuse(current_user.id, db)
+        # Check user abuse rate and get suspension status
+        user_suspended = await check_and_handle_user_abuse(current_user.id, db)
         
         return {
             "message": "Comment flagged for abuse",
@@ -337,7 +350,8 @@ async def create_comment(comment: schemas.CommentCreate,
             "visible_in_feed": visible_in_feed,
             "auto_processed": review_result["auto_action"] != "human_review_needed",
             "spam_detected": False,
-            "abuse_detected": True
+            "abuse_detected": True,
+            "user_suspended": user_suspended  # NEW: Return suspension status
         }
     
     # STEP 2: If NOT abusive, check for SPAM
@@ -379,10 +393,11 @@ async def create_comment(comment: schemas.CommentCreate,
             "auto_processed": True,
             "spam_detected": True,
             "spam_reasons": spam_result["reasons"],
-            "spam_message": spam_result["message"]
+            "spam_message": spam_result["message"],
+            "user_suspended": False
         }
     
-    # Warning case (hide warning comments too)
+    # Warning case
     if spam_result["action"] == "warning":
         db_comment = models.Comment(
             text=comment.text,
@@ -406,7 +421,8 @@ async def create_comment(comment: schemas.CommentCreate,
             "visible_in_feed": True,
             "auto_processed": True,
             "spam_detected": False,
-            "warning": spam_result["message"]
+            "warning": spam_result["message"],
+            "user_suspended": False
         }
     
     # STEP 3: If neither abusive nor spam, APPROVE
@@ -431,7 +447,8 @@ async def create_comment(comment: schemas.CommentCreate,
         "comment_id": db_comment.id,
         "visible_in_feed": True,
         "auto_processed": True,
-        "spam_detected": False
+        "spam_detected": False,
+        "user_suspended": False
     }
 
 # ==================== POST DELETION ENDPOINTS ====================
@@ -614,10 +631,13 @@ def get_all_users_list(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """User List page - 'All Users List' with detailed characteristics"""
-    from datetime import datetime, timedelta  # Make sure imports are here
+    """User List page - Exclude suspended users"""
+    from datetime import datetime, timedelta
     
-    users = db.query(models.User).order_by(models.User.created_at.desc()).all()
+    # NEW: Filter out suspended users
+    users = db.query(models.User).filter(
+        models.User.is_suspended == False
+    ).order_by(models.User.created_at.desc()).all()
     
     users_data = []
     for user in users:
@@ -644,18 +664,17 @@ def get_all_users_list(
             time_since_login = datetime.utcnow() - user.last_login
             is_recently_active = time_since_login < timedelta(hours=24)
             
-            # Format last login time
             total_seconds = time_since_login.total_seconds()
             
-            if total_seconds < 60:  # Less than 1 minute
+            if total_seconds < 60:
                 last_activity = "Just now"
-            elif total_seconds < 3600:  # Less than 1 hour
+            elif total_seconds < 3600:
                 minutes = int(total_seconds / 60)
                 last_activity = f"{minutes} min ago"
-            elif total_seconds < 86400:  # Less than 1 day
+            elif total_seconds < 86400:
                 hours = int(total_seconds / 3600)
                 last_activity = f"{hours} hour{'s' if hours > 1 else ''} ago"
-            elif time_since_login.days < 7:  # Less than 1 week
+            elif time_since_login.days < 7:
                 days = time_since_login.days
                 last_activity = f"{days} day{'s' if days > 1 else ''} ago"
             else:
@@ -1128,7 +1147,7 @@ def review_comment(comment_id: int,
         raise HTTPException(status_code=400, detail="Invalid action. Use: approve, hide, delete")
     
     comment.moderated_by = moderator.id
-    comment.moderated_at = datetime.utcnow()
+    comment.moderated_at = get_india_time()
     
     db.commit()
     return {
@@ -1193,7 +1212,7 @@ async def delete_user_account(
             "deleted_user_id": user_id,
             "deleted_username": deleted_username,
             "deleted_by": moderator.username,
-            "deleted_at": datetime.utcnow().isoformat()
+            "deleted_at": get_india_time().isoformat()
         }
         
     except Exception as e:
@@ -1299,7 +1318,7 @@ async def suspend_moderator(
     
     moderator.is_suspended = True
     moderator.is_active = False
-    moderator.suspended_at = datetime.utcnow()
+    moderator.suspended_at = get_india_time()
     moderator.suspension_reason = suspension_data.get("reason", "Policy violation")
     db.commit()
     
