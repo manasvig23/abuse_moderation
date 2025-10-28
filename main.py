@@ -615,6 +615,8 @@ def get_all_users_list(
     db: Session = Depends(get_db)
 ):
     """User List page - 'All Users List' with detailed characteristics"""
+    from datetime import datetime, timedelta  # Make sure imports are here
+    
     users = db.query(models.User).order_by(models.User.created_at.desc()).all()
     
     users_data = []
@@ -634,23 +636,26 @@ def get_all_users_list(
             models.Comment.status == "approved"
         ).count()
         
+        # Calculate last activity
         is_recently_active = False
         last_activity = "Never"
         
-        if user.last_login:
+        if user.last_login is not None:
             time_since_login = datetime.utcnow() - user.last_login
             is_recently_active = time_since_login < timedelta(hours=24)
             
             # Format last login time
-            if time_since_login < timedelta(minutes=1):
+            total_seconds = time_since_login.total_seconds()
+            
+            if total_seconds < 60:  # Less than 1 minute
                 last_activity = "Just now"
-            elif time_since_login < timedelta(hours=1):
-                minutes = int(time_since_login.total_seconds() / 60)
+            elif total_seconds < 3600:  # Less than 1 hour
+                minutes = int(total_seconds / 60)
                 last_activity = f"{minutes} min ago"
-            elif time_since_login < timedelta(days=1):
-                hours = int(time_since_login.total_seconds() / 3600)
+            elif total_seconds < 86400:  # Less than 1 day
+                hours = int(total_seconds / 3600)
                 last_activity = f"{hours} hour{'s' if hours > 1 else ''} ago"
-            elif time_since_login < timedelta(days=7):
+            elif time_since_login.days < 7:  # Less than 1 week
                 days = time_since_login.days
                 last_activity = f"{days} day{'s' if days > 1 else ''} ago"
             else:
@@ -669,7 +674,9 @@ def get_all_users_list(
             "flagged_comments": flagged_comments,
             "hidden_comments": hidden_comments,
             "join_date": user.created_at.strftime("%Y-%m-%d"),
-            "status": "Active" if user.is_active else "Disabled"
+            "status": "Active" if user.is_active else "Disabled",
+            "is_recently_active": is_recently_active,
+            "last_activity": last_activity
         })
     
     return {
