@@ -134,6 +134,53 @@ async def check_and_handle_user_abuse(user_id: int, db: Session):
     if not user:
         return False
     
+    user_comments = db.query(models.Comment).filter(
+        models.Comment.user_id == user_id
+    ).all()
+    
+    # Group comments by post author to detect targeted abuse
+    from collections import defaultdict
+    abuse_by_author = defaultdict(int)
+    
+    for comment in user_comments:
+        if comment.is_abusive == 1:
+            post = db.query(models.Post).filter(models.Post.id == comment.post_id).first()
+            if post:
+                abuse_by_author[post.author_id] += 1
+    
+    # Check if user has 3+ abusive comments on any single author's posts
+    for author_id, abuse_count in abuse_by_author.items():
+        if abuse_count >= 3:
+            # Check if blocking relationship already exists
+            existing_block = db.query(models.UserBlock).filter(
+                models.UserBlock.blocker_id == author_id,
+                models.UserBlock.blocked_id == user_id
+            ).first()
+            
+            if not existing_block:
+                # Create blocking relationship
+                block = models.UserBlock(
+                    blocker_id=author_id,
+                    blocked_id=user_id,
+                    reason="auto_abuse",
+                    created_at=datetime.utcnow()
+                )
+                db.add(block)
+                db.commit()
+                
+                # Get blocker username
+                blocker = db.query(models.User).filter(models.User.id == author_id).first()
+                
+                # Send blocking notification email
+                try:
+                    await email_service.send_blocking_notification(
+                        user_email=user.email,
+                        username=user.username,
+                        blocked_by_username=blocker.username if blocker else "Unknown"
+                    )
+                except Exception as e:
+                    print(f"Failed to send blocking notification: {e}")
+    
     # Calculate abuse rate
     total_comments = db.query(models.Comment).filter(models.Comment.user_id == user_id).count()
     flagged_comments = db.query(models.Comment).filter(
@@ -297,7 +344,7 @@ def create_post(post: schemas.PostCreate,
 async def create_comment(comment: schemas.CommentCreate, 
                   current_user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    """Post a comment with ABUSE and spam monitoring"""
+    """Post a comment with ABUSE and spam monitoring + BLOCKING CHECK"""
     
     from spam_detection import detect_spam
     
@@ -305,17 +352,27 @@ async def create_comment(comment: schemas.CommentCreate,
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
+    is_blocked = db.query(models.UserBlock).filter(
+        models.UserBlock.blocker_id == post.author_id,
+        models.UserBlock.blocked_id == current_user.id
+    ).first()
+    
+    if is_blocked:
+        raise HTTPException(
+            status_code=403, 
+            detail="You are blocked from commenting on this user's posts."
+        )
+    # END OF BLOCKING CHECK
+    
     if len(comment.text.strip()) == 0:
         raise HTTPException(status_code=400, detail="Comment cannot be empty")
     if len(comment.text) > 1000:
         raise HTTPException(status_code=400, detail="Comment too long (max 1000 characters)")
     
-    # STEP 1: Check for ABUSE FIRST (Primary detection)
+    # STEP 1: Check for ABUSE FIRST
     review_result = is_abusive_with_auto_review(comment.text)
     
-    # If abusive, handle immediately (don't check spam)
     if review_result["is_abusive"] == 1:
-        # Determine status based on auto-review
         if review_result["auto_action"] in ["approve", "auto_approve"]:
             comment_status = "approved"
             visible_in_feed = True
@@ -323,7 +380,6 @@ async def create_comment(comment: schemas.CommentCreate,
             comment_status = "hidden" if review_result["auto_action"] == "keep_hidden" else "pending_review"
             visible_in_feed = False
         
-        # Create abusive comment
         db_comment = models.Comment(
             text=comment.text,
             is_spam=0,
@@ -341,7 +397,6 @@ async def create_comment(comment: schemas.CommentCreate,
         db.commit()
         db.refresh(db_comment)
         
-        # Check user abuse rate and get suspension status
         user_suspended = await check_and_handle_user_abuse(current_user.id, db)
         
         return {
@@ -351,14 +406,13 @@ async def create_comment(comment: schemas.CommentCreate,
             "auto_processed": review_result["auto_action"] != "human_review_needed",
             "spam_detected": False,
             "abuse_detected": True,
-            "user_suspended": user_suspended  # NEW: Return suspension status
+            "user_suspended": user_suspended
         }
     
-    # STEP 2: If NOT abusive, check for SPAM
+    # STEP 2: Check for SPAM
     spam_result = detect_spam(comment.text, current_user.id, comment.post_id, db)
     
     if spam_result["is_spam"]:
-        # Hide all promotional comments if needed
         if spam_result.get("hide_all") and spam_result.get("similar_comment_ids"):
             for comment_id in spam_result["similar_comment_ids"]:
                 old_comment = db.query(models.Comment).filter(
@@ -369,7 +423,6 @@ async def create_comment(comment: schemas.CommentCreate,
                     old_comment.is_spam = 1
             db.commit()
         
-        # Create spam comment (hidden)
         db_comment = models.Comment(
             text=comment.text,
             is_spam=1,
@@ -425,7 +478,7 @@ async def create_comment(comment: schemas.CommentCreate,
             "user_suspended": False
         }
     
-    # STEP 3: If neither abusive nor spam, APPROVE
+    # STEP 3: APPROVE clean comments
     db_comment = models.Comment(
         text=comment.text,
         is_spam=0,
@@ -710,9 +763,10 @@ def get_users_for_dropdown(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """Get simplified user list for dropdown selections"""
+    """Get simplified user list for dropdown - EXCLUDE SUSPENDED"""
     users = db.query(models.User).filter(
-        models.User.role == "user"  # Only get regular users
+        models.User.role == "user",
+        models.User.is_suspended == False  # ADD THIS
     ).order_by(models.User.username).all()
     
     return {
@@ -732,8 +786,10 @@ def get_all_posts_moderation(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """All Posts page - Select user from dropdown and see their posts with 'View Comments'"""
-    query = db.query(models.Post)
+    """All Posts page - Exclude suspended users"""
+    query = db.query(models.Post).join(models.User).filter(
+        models.User.is_suspended == False  # ADD THIS
+    )
     
     selected_user = None
     if user_id:
@@ -743,7 +799,6 @@ def get_all_posts_moderation(
         query = query.filter(models.Post.author_id == user_id)
     
     posts = query.order_by(models.Post.created_at.desc()).all()
-    
     result = []
     for post in posts:
         # Count different types of comments
@@ -834,12 +889,11 @@ def get_posts_for_review(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """Review Comments page - Enhanced table with user details"""
-    
-    # Get all posts that have comments needing human review
-    posts_with_pending = db.query(models.Post).join(models.Comment).filter(
+    """Review Comments page - Exclude suspended users"""
+    posts_with_pending = db.query(models.Post).join(models.User).join(models.Comment).filter(
         models.Comment.auto_review_action == "human_review_needed",
-        models.Comment.status == "pending_review"
+        models.Comment.status == "pending_review",
+        models.User.is_suspended == False  # ADD THIS
     ).distinct().order_by(models.Post.created_at.desc()).all()
     
     result = []
@@ -930,9 +984,10 @@ def get_flagged_comments(
     moderator: models.User = Depends(get_current_moderator),
     db: Session = Depends(get_db)
 ):
-    """Flagged Comments page - Select user and view posts with flagged/hidden comments"""
-    query = db.query(models.Post).join(models.Comment).filter(
-        models.Comment.is_abusive == 1
+    """Flagged Comments page - Exclude suspended users"""
+    query = db.query(models.Post).join(models.User).join(models.Comment).filter(
+        models.Comment.is_abusive == 1,
+        models.User.is_suspended == False  # ADD THIS
     )
     
     selected_user = None
